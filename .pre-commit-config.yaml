@@ -1,0 +1,13 @@
+repos:
+  - repo: local
+    hooks:
+      - id: psscriptanalyzer-generalrules
+        name: run PSScriptAnalyzer rules
+        language: system
+        entry: pwsh -NoProfile -Command "Invoke-ScriptAnalyzer -EnableExit"
+        files: WindowsWhiteboxScript.ps1
+      - id: psscriptanalyzer-formatting
+        name: run PSScriptAnalyzer formatting checks
+        language: system
+        entry: pwsh -NoProfile -Command "Invoke-ScriptAnalyzer -EnableExit -Settings CodeFormatting -Fix"
+        files: WindowsWhiteboxScript.ps1

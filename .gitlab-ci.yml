@@ -1,0 +1,12 @@
+stages:
+  - static analysis
+
+psscriptanalyzer:
+  image: mcr.microsoft.com/powershell
+  stage: static analysis
+  script:
+    - pwsh -command "Install-Module PSScriptAnalyzer -Force"
+    - pwsh -command "Import-Module PSScriptAnalyzer"
+    - pwsh -command "Get-InstalledModule | Select-Object Name, Version"
+    - pwsh -Command "Invoke-ScriptAnalyzer -Verbose -EnableExit *.ps1"
+    - pwsh -Command "Invoke-ScriptAnalyzer -Verbose -EnableExit -Settings CodeFormatting *.ps1"
