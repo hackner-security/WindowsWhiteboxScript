@@ -52,7 +52,7 @@ param(
 )
 
 # Version
-$versionString = "v3.0"
+$versionString = "v3.1"
 
 # Check permissions of the following paths
 $paths += $env:ProgramFiles
@@ -92,6 +92,7 @@ $filenames = @{
     "tasks"                = "scheduled_tasks"
     "devicesec"            = "device_security"
     "cmdlist"              = "command_list"
+    "mssql"                = "mssql_configuration"
 }
 
 $rememberFormatEnumerationLimit = $null
@@ -1170,6 +1171,10 @@ function Invoke-NetworkTrafficCapture {
 
 function Get-DeviceSecurity {
 
+    $kernelDmaProtectionRegistry = "HKLM:\Software\Policies\Microsoft\Windows"
+    $kernelDmaProtectionKey = "Kernel DMA Protection"
+    Get-RegistryValue -path $kernelDmaProtectionRegistry -key $kernelDmaProtectionKey -outputFile $filenames.devicesec
+
     $driverListPowerShellCommand = { Get-WmiObject Win32_PnPSignedDriver | Format-Table -AutoSize DeviceName, FriendlyName, DriverVersion, DriverDate | Out-String -Width 4096 }
     Invoke-PowerShellCommandAndDocumentation -scriptBlock $driverListPowerShellCommand -headline "Installed Drivers" -outputFile $filenames.devicesec
 
@@ -1184,6 +1189,61 @@ function Get-DeviceSecurity {
 
 }
 
+function Get-MSSQLServerConfiguration {
+
+    $mssqlRegistryRoot = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server"
+
+    # Check if the MSSQL service is running on the system
+    try {
+        # Check if registry exists; Out-Null is used here, because otherwise the result is put into the return pipeline
+        Get-Item $mssqlRegistryRoot -ErrorAction Stop | Out-Null
+    }
+    catch {
+        Write-Data -Output "No MSSQL service found." -File $filenames.mssql
+        $mssqlResults = @{
+            Running = $false
+        }
+        return $mssqlResults
+    }
+
+    $instances = Get-ChildItem $mssqlRegistryRoot | Where-Object { $_ -match "MSSQL..\." }
+    $instanceResults = New-Object System.Collections.ArrayList
+    foreach ($instance in $instances) {
+        $instanceName = $instance.PSChildName
+        $forceEncryption = (Get-ItemProperty "$mssqlRegistryRoot\$instanceName\MSSQLServer\SuperSocketNetLib")."ForceEncryption"
+        $certificateHash = (Get-ItemProperty "$mssqlRegistryRoot\$instanceName\MSSQLServer\SuperSocketNetLib")."Certificate"
+        $certificate = $null
+        if ($certificateHash) {
+            $certificate = Get-ChildItem -Path "Cert:\LocalMachine\" -Recurse | Where-Object { $_.Thumbprint -eq "$certificateHash" }
+            $mssqlCertificatePowerShellCommand = { Get-ChildItem -Path "Cert:\LocalMachine\" -Recurse | Where-Object { $_.Thumbprint -eq "$certificateHash" } | Format-List | Out-String -Width 4096 }
+            Invoke-PowerShellCommandAndDocumentation -scriptBlock $mssqlCertificatePowerShellCommand -headline "MSSQL Certificate Information" -outputFile $filenames.mssql
+            $base64 = $([Convert]::ToBase64String($certificate.Export('Cert'), [System.Base64FormattingOptions]::InsertLineBreaks))
+            $base64certificate = "-----BEGIN CERTIFICATE-----`n$base64`n-----END CERTIFICATE-----"
+            Write-Data -Output $base64certificate -File $filenames.mssql
+        }
+        else {
+            Write-Data -Output "$instanceName : No MSSQL certificate found." -File $filenames.mssql
+        }
+        $instanceResult = @{
+            name               = $instanceName
+            forceEncryption    = $forceEncryption
+            certificateIssuer  = $certificate.Issuer
+            certificateSubject = $certificate.Subject
+        }
+        $instanceResults += $instanceResult
+    }
+
+    # Print the relevant information to the output file, the important information is stored in the registry in "SuperSocketNetLib"
+    $mssqlRegistryPowerShellCommand = { Get-ChildItem -Recurse "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server" | Where-Object { $_ -match "SuperSocketNetLib" } }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $mssqlRegistryPowerShellCommand -headline "Full MSSQL registry settings" -outputFile $filenames.mssql
+
+    $mssqlResults = @{
+        running   = $true
+        instances = $instanceResults
+    }
+    $mssqlResults
+}
+
 ###############################
 ### Main Part of the Script ###
 ###############################
@@ -1191,48 +1251,40 @@ function Get-DeviceSecurity {
 #Create basic file structure and adjust settings
 Invoke-Setup
 
-#Generate information objects for further processing and for JSON result file
+#Get information about host
 $hostinfo = Get-HostInformation
-$rdpinfo = Get-RDPConfiguration
-$autologoninfo = Get-AutoLogon
-$responderinfo = Get-ResponderProtocol
-$patchinfo = Get-Patchlevel
-$privilegeescalationinfo = Get-PrivilegeEscalation
-$wsusinfo = Get-WSUS
-$credentialprotectioninfo = Get-CredentialProtection
-$smbinfo = Get-SmbInformation
-$uacinfo = Get-UAC
-$psremoteinfo = Get-PSRemoting
-$seceditinfo = Invoke-Secedit
-$psversion2info = Get-InsecurePowerShellVersion
-$serviceinfo = Get-SystemService
 
-# First, create the result JSON file
+# Create the JSON result file with information gathered from various sources
 $result = @{
-    $filenames.autologon            = $autologoninfo
+    $filenames.autologon            = Get-AutoLogon
     $filenames.host                 = $hostinfo
-    $filenames.patchlevel           = $patchinfo
-    $filenames.privilegeEscalation  = $privilegeescalationinfo
-    $filenames.responder            = $responderinfo
-    $filenames.rdp                  = $rdpinfo
-    $filenames.wsus                 = $wsusinfo
-    $filenames.credentialProtection = $credentialprotectioninfo
-    $filenames.smb                  = $smbinfo
-    $filenames.uac                  = $uacinfo
-    $filenames.psremote             = $psremoteinfo
-    $filenames.secedit              = $seceditinfo
-    $filenames.basicinfo            = $psversion2info
-    $filenames.services             = $serviceinfo
+    $filenames.patchlevel           = Get-Patchlevel
+    $filenames.privilegeEscalation  = Get-PrivilegeEscalation
+    $filenames.responder            = Get-ResponderProtocol
+    $filenames.rdp                  = Get-RDPConfiguration
+    $filenames.wsus                 = Get-WSUS
+    $filenames.credentialProtection = Get-CredentialProtection
+    $filenames.smb                  = Get-SmbInformation
+    $filenames.uac                  = Get-UAC
+    $filenames.psremote             = Get-PSRemoting
+    $filenames.secedit              = Invoke-Secedit
+    $filenames.basicinfo            = Get-InsecurePowerShellVersion
+    $filenames.services             = Get-SystemService
+    $filenames.mssql                = Get-MSSQLServerConfiguration
 }
+
 if ($Script:psVersion.Major -ge 3) {
+    Write-Data -Output "Exporting data to JSON" -File $filenames.logfile
     if ($script:testing) {
         ConvertTo-Json -InputObject $result -Depth 20 | Out-File -Encoding utf8 "$outputdir\$env:computername.json"
     }
     else {
         ConvertTo-Json -InputObject $result -Depth 20 -Compress | Out-File -Encoding utf8 "$outputdir\$env:computername.json"
     }
+    Write-Data -Output "JSON export done" -File $filenames.logfile
 }
 else {
+    Write-Data -Output "Exporting data to XML" -File $filenames.logfile
     Export-Clixml -InputObject $result -Depth 20 -Encoding UTF8 -Path "$outputdir\$env:computername.xml"
 }
 
