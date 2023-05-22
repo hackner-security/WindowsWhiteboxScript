@@ -93,6 +93,7 @@ $filenames = @{
     "devicesec"            = "device_security"
     "cmdlist"              = "command_list"
     "mssql"                = "mssql_configuration"
+    "nfs"                  = "nfs"
 }
 
 $rememberFormatEnumerationLimit = $null
@@ -132,14 +133,14 @@ function Invoke-Setup {
     }
 
     $Script:startTime = Get-Date -UFormat '%Y/%m/%d %H:%M'
-    Write-Data -Output "${script:startTime}: Started script execution." -File $filenames.logfile -InformationAction Continue
+    Write-Data -Output "${script:startTime}: Started script execution." -File $filenames.logfile -useWriteOutput
 
     # Store the script version in log files
-    Write-Data -Output "Script version: $versionString" -File $filenames.logfile -InformationAction Continue
+    Write-Data -Output "Script version: $versionString" -File $filenames.logfile -useWriteOutput
 
     # Print the powershell version
     $Script:psversion = $PSVersionTable.PSVersion
-    Write-Data -Output "Powershell version: $($psversion.Major).$($psversion.Minor)" -File $filenames.logfile -InformationAction Continue
+    Write-Data -Output "Powershell version: $($psversion.Major).$($psversion.Minor)" -File $filenames.logfile -useWriteOutput
 
     #Change the enumeration limit, so our outputs do not get truncated on 4 elements
     # (do to a PowerShell bug, we have to set it globally during the script execution and set at back at the end)
@@ -169,19 +170,26 @@ function Invoke-Teardown {
     }
 
     $endTime = Get-Date -UFormat '%Y/%m/%d %H:%M'
-    Write-Data -Output "${endTime}: All Done." -File $filenames.logfile -InformationAction Continue
+    Write-Data -Output "${endTime}: All Done." -File $filenames.logfile -useWriteOutput
 }
 
 #Writes to console screen and output file
 function Write-Data() {
-    [CmdletBinding()]
     param (
         [parameter(Mandatory = $true)] $Output,
-        [parameter(Mandatory = $true)][String] $File
+        [parameter(Mandatory = $true)][String] $File,
+        [switch] $useWriteOutput
     )
 
-    Write-Debug "$Output"
-    Write-Information "$Output"
+    if ($useWriteOutput) {
+        # Put $Output in the stream, so it is returned by the function. Use this parameter with care if you
+        # are not handling the output accordingly
+        $Output
+    }
+    else {
+        Write-Debug "$Output"
+    }
+
     if (-Not $outputFileContents.ContainsKey($File)) {
         $outputFileContents.$File = ($Output | Out-String -Width 4096)
     }
@@ -232,7 +240,7 @@ function Invoke-CmdCommandAndDocumentation {
     }
     $windirPath = "%windir%\System32\"
     Write-Data -Output "[Command][CMD] $command" -File $outputFile
-    $commandResult = & "$env:windir\System32\cmd.exe" /c "$windirPath\$subpath\$command"
+    $commandResult = & "$env:windir\System32\cmd.exe" /c "$windirPath\$subpath\$command 2> nul"
     # For external executables, try-catch blocks cannot be used. We need to check $LASTEXITCODE instead
     if ($LASTEXITCODE -ne 0) {
         Write-Data -Output "[Error] Command execution failed." -File $outputFile
@@ -271,7 +279,7 @@ function Get-RegistryValue {
     }
 
     Write-Data -Output "[Registry] $path\$key = $resultString" -File $outputFile
-    return $returnValue
+    $returnValue
 }
 
 function Compress-Result {
@@ -501,10 +509,6 @@ function Get-SmbInformation {
     Invoke-CmdCommandAndDocumentation -command $netUseCmdCommand -outputFile $filenames.smb
 
     # Find out about SMB1 support (this can also be done with Get-SmbServerConfiguration, but not on Server 2008)
-    Write-Data -Output "### SMBv1 Information ###" -File $filenames.smb
-    Write-Data -Output "SMBv1 Registry: 0: Disabled, 1: Enabled, not found: Default setting applies" -File $filenames.smb
-    Write-Data -Output "Defaults: 2008: Enabled, 2012: Enabled, 2016: Enabled, 2019: Disabled" -File $filenames.smb
-
     $smbRegistry = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
     $smb1Key = "SMB1"
     $smb1RegistryValue = Get-RegistryValue -path $smbRegistry -key $smb1Key -outputFile $filenames.smb
@@ -635,7 +639,7 @@ function Get-AntiVirusProduct {
     $antiVirusWMIPowerShellCommand = { Get-WmiObject -Namespace "root\SecurityCenter2" -Class AntiVirusProduct | Format-List * | Out-String -Width 4096 }
     Invoke-PowerShellCommandAndDocumentation -scriptBlock $antiVirusWMIPowerShellCommand -headline "Query Antivirus via WMI" -outputFile $filenames.antivirus
     $antiVirusCIMPowerShellCommand = { Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct | Format-List * | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $antiVirusCIMPowerShellCommand -headline "Query Antivirus via CMI" -outputFile $filenames.antivirus
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $antiVirusCIMPowerShellCommand -headline "Query Antivirus via CIM" -outputFile $filenames.antivirus
 
 }
 
@@ -689,13 +693,11 @@ function Get-ResponderProtocol {
     Invoke-PowerShellCommandAndDocumentation -scriptBlock $nbnsPowerShellCommand -headline "NBNS Settings" -outputFile $filenames.responder
 
     # LLMNR Check
-    Write-Data -Output "### LLMNR ###" -File $filenames.responder
     $llmnrRegistry = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient"
     $llmnrKey = "EnableMulticast"
     $llmnr = Get-RegistryValue -path $llmnrRegistry -key $llmnrKey -outputFile $filenames.responder
 
     # MDNS Check
-    Write-Data -Output "### mDNS ###" -File $filenames.responder
     $mdnsRegistry = "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters"
     $mdnsKey = "EnableMDNS"
     $mdns = Get-RegistryValue -path $mdnsRegistry -key $mdnsKey -outputFile $filenames.responder
@@ -850,12 +852,6 @@ function Get-HostInformation {
 
 function Get-CredentialProtection {
 
-    Write-Data -Output "[*] Checking for Credential Protection Mechanisms" -File $filenames.credentialProtection
-    Write-Data -Output "[*] RunAsPPL: -1: not set, 0: Not protected, 1: Protected" -File $filenames.credentialProtection
-    Write-Data -Output "[*] WDigest: -1: not set, 0: Protected, 1: Not protected" -File $filenames.credentialProtection
-    Write-Data -Output "[*] RunAsPPL: Default off: Until Server 2008" -File $filenames.credentialProtection
-    Write-Data -Output "[*] Wdigest Default on: Server 2008, Default off: From Server 2012" -File $filenames.credentialProtection
-
     $runaspplRegistry = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
     $runaspplKey = "RunAsPPL"
     $wdigestRegistry = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest"
@@ -895,12 +891,6 @@ function Get-CredentialProtection {
 }
 
 function Get-UAC {
-
-    Write-Data -Output "[*] Checking for User Account Control (UAC) Settings" -File $filenames.uac
-    Write-Data -Output "[*] Admin Prompt: -1: Not found, 0: Elevate without prompting (Bad), 1: Prompt for credentials on the secure desktop," -File $filenames.uac
-    Write-Data -Output "[*] Admin Prompt: 2: Prompt for consent on the secure desktop, 3: Prompt for credentials, 4: Prompt for consent," -File $filenames.uac
-    Write-Data -Output "[*] Admin Prompt: 5: Prompt for consent for non-Windows binaries" -File $filenames.uac
-    Write-Data -Output "[*] UAC: 0: Disabled, 1: Enabled" -File $filenames.uac
 
     $uacRegistry = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
     $adminPromptKey = "ConsentPromptBehaviorAdmin"
@@ -1053,7 +1043,7 @@ function Get-PSRemoting {
         $psremotingjson += @{
             psremotingenabled = $false
         }
-        return $psremotingjson
+        $psremotingjson
     }
 
     # Retrieve all importan PS remoting settings, collect them for the JSON file
@@ -1099,7 +1089,7 @@ function Get-PSRemoting {
         LocalAccountTokenFilterPolicy = $token
     }
 
-    return $psremotejson
+    $psremotejson
 }
 
 function Invoke-Secedit {
@@ -1114,7 +1104,7 @@ function Invoke-Secedit {
         Remove-Item "$outputdir\$($filenames.secedit)"
     }
 
-    return $output
+    $output
 }
 
 function Get-InsecurePowerShellVersion {
@@ -1138,7 +1128,7 @@ function Get-InsecurePowerShellVersion {
         psCommand           = $psCommand
         commandOutput       = ($psVersion2 | Out-String)
     }
-    return $ps2Json
+    $ps2Json
 }
 
 function Get-SystemService {
@@ -1164,8 +1154,8 @@ function Invoke-NetworkTrafficCapture {
     }
     finally {
         Start-Process "$($env:windir)\System32\netsh.exe" -ArgumentList "trace stop" -Wait -NoNewWindow
-        Write-Data -Output "You can use etl2pcapng to convert the created etl file (https://github.com/microsoft/etl2pcapng)" -File $filenames.logfile -InformationAction Continue
-        Write-Data -Output "Command: etl2pcapng.exe traffic.etl out.pcapng" -File $filenames.logfile -InformationAction Continue
+        Write-Data -Output "You can use etl2pcapng to convert the created etl file (https://github.com/microsoft/etl2pcapng)" -File $filenames.logfile -useWriteOutput
+        Write-Data -Output "Command: etl2pcapng.exe traffic.etl out.pcapng" -File $filenames.logfile -useWriteOutput
     }
 }
 
@@ -1173,7 +1163,7 @@ function Get-DeviceSecurity {
 
     $kernelDmaProtectionRegistry = "HKLM:\Software\Policies\Microsoft\Windows"
     $kernelDmaProtectionKey = "Kernel DMA Protection"
-    Get-RegistryValue -path $kernelDmaProtectionRegistry -key $kernelDmaProtectionKey -outputFile $filenames.devicesec
+    Get-RegistryValue -path $kernelDmaProtectionRegistry -key $kernelDmaProtectionKey -outputFile $filenames.devicesec | Out-Null
 
     $driverListPowerShellCommand = { Get-WmiObject Win32_PnPSignedDriver | Format-Table -AutoSize DeviceName, FriendlyName, DriverVersion, DriverDate | Out-String -Width 4096 }
     Invoke-PowerShellCommandAndDocumentation -scriptBlock $driverListPowerShellCommand -headline "Installed Drivers" -outputFile $filenames.devicesec
@@ -1191,27 +1181,35 @@ function Get-DeviceSecurity {
 
 function Get-MSSQLServerConfiguration {
 
-    $mssqlRegistryRoot = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server"
-
-    # Check if the MSSQL service is running on the system
-    try {
-        # Check if registry exists; Out-Null is used here, because otherwise the result is put into the return pipeline
-        Get-Item $mssqlRegistryRoot -ErrorAction Stop | Out-Null
-    }
-    catch {
-        Write-Data -Output "No MSSQL service found." -File $filenames.mssql
+    # Check if an MSSQL service is running on the machine
+    $mssqlServices = Get-WmiObject win32_service | Where-Object { $_.Name -eq "MSSQLSERVER" -or $_.Name.StartsWith("MSSQL$") -and $_.State -eq "running" }
+    if (-not $mssqlServices) {
         $mssqlResults = @{
-            Running = $false
+            running = $false
         }
-        return $mssqlResults
+        $mssqlResults
+        return
     }
 
-    $instances = Get-ChildItem $mssqlRegistryRoot | Where-Object { $_ -match "MSSQL..\." }
+    # First, we need to find the instance name of the database. We can use the instance name to find the correct path in the registry later
+    $instanceNames = New-Object System.Collections.ArrayList
+    foreach ($serviceName in $mssqlServices.Name) {
+        if ($serviceName.Contains("$")) {
+            $instanceName = $serviceName.Split("$")[1]
+        }
+        else {
+            $instanceName = serviceName
+        }
+        $instanceNames += $instanceName
+    }
+
+    $mssqlRegistryRoot = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server"
     $instanceResults = New-Object System.Collections.ArrayList
-    foreach ($instance in $instances) {
-        $instanceName = $instance.PSChildName
-        $forceEncryption = (Get-ItemProperty "$mssqlRegistryRoot\$instanceName\MSSQLServer\SuperSocketNetLib")."ForceEncryption"
-        $certificateHash = (Get-ItemProperty "$mssqlRegistryRoot\$instanceName\MSSQLServer\SuperSocketNetLib")."Certificate"
+    foreach ($instanceName in $instanceNames) {
+        # Find the registry name of the instance (because, this is usually prepended by MSSQLxy)
+        $instanceRegistryName = (Get-ItemProperty "$mssqlRegistryRoot\Instance Names\SQL")."$instanceName"
+        $forceEncryption = (Get-ItemProperty "$mssqlRegistryRoot\$instanceRegistryName\MSSQLServer\SuperSocketNetLib")."ForceEncryption"
+        $certificateHash = (Get-ItemProperty "$mssqlRegistryRoot\$instanceRegistryName\MSSQLServer\SuperSocketNetLib")."Certificate"
         $certificate = $null
         if ($certificateHash) {
             $certificate = Get-ChildItem -Path "Cert:\LocalMachine\" -Recurse | Where-Object { $_.Thumbprint -eq "$certificateHash" }
@@ -1221,11 +1219,9 @@ function Get-MSSQLServerConfiguration {
             $base64certificate = "-----BEGIN CERTIFICATE-----`n$base64`n-----END CERTIFICATE-----"
             Write-Data -Output $base64certificate -File $filenames.mssql
         }
-        else {
-            Write-Data -Output "$instanceName : No MSSQL certificate found." -File $filenames.mssql
-        }
         $instanceResult = @{
             name               = $instanceName
+            registryName       = $instanceRegistryName
             forceEncryption    = $forceEncryption
             certificateIssuer  = $certificate.Issuer
             certificateSubject = $certificate.Subject
@@ -1242,6 +1238,23 @@ function Get-MSSQLServerConfiguration {
         instances = $instanceResults
     }
     $mssqlResults
+}
+
+function Get-NfsConfiguration {
+
+    $mountCmdCommand = "mount.exe"
+    Invoke-CmdCommandAndDocumentation -command $mountCmdCommand -outputFile $filenames.nfs
+    $nfsSharePowerShellCommand = { Get-NfsShare -ErrorAction SilentlyContinue | Format-List * }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $nfsSharePowerShellCommand -headline "List of NFS shares" -outputFile $filenames.nfs
+    $nfsClientConfigurationPowerShellCommand = { Get-NfsClientconfiguration -ErrorAction SilentlyContinue }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $nfsClientConfigurationPowerShellCommand -headline "NFS Client Configuration" -outputFile $filenames.nfs
+    $nfsServerConfigurationPowerShellCommand = { Get-NfsServerConfiguration -ErrorAction SilentlyContinue }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $nfsServerConfigurationPowerShellCommand -headline "NFS Server Configuration" -outputFile $filenames.nfs
+    $nfsPermissionsPowerShellCommand = { Get-NfsShare -ErrorAction SilentlyContinue | ForEach-Object { "NFS share `"$($_.Name)`" on path `"$($_.Path)`""; Get-NfsSharePermission "$($_.Name)"; "" } }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $nfsPermissionsPowerShellCommand -headline "Check NFS Permissions" -outputFile $filenames.nfs
+    $nfsNtfsPermissionsPowerShellCommand = { Get-NfsShare -ErrorAction SilentlyContinue | ForEach-Object { "NFS share `"$($_.Name)`" on path `"$($_.Path)`""; Get-Acl "$($_.Path)" | Select-Object -ExpandProperty Access | Format-Table -AutoSize | Out-String -Width 4096 } }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $nfsNtfsPermissionsPowerShellCommand -headline "Check NTFS Permissions of NFS Shares" -outputFile $filenames.nfs
+
 }
 
 ###############################
@@ -1351,6 +1364,9 @@ If (-Not $onlyJson) {
     # Device Security (BIOS, drivers, sleep state)
     Get-DeviceSecurity
 
+    # NFS Configuration (server and client configuration)
+    Get-NfsConfiguration
+
     #Perform network trace
     if ($PSBoundParameters.ContainsKey("captureTraffic")) {
         Invoke-NetworkTrafficCapture -seconds $captureTraffic -outputPath "$outputdir\traffic.etl"
@@ -1360,4 +1376,4 @@ If (-Not $onlyJson) {
 #Do some error reporting
 Invoke-Teardown
 
-return $result
+$result
