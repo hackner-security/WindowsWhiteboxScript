@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Unreleased
 
+## [3.3] - 2023-07-27
+
+### Added
+
+* Drivers are now checked from certain folders and their names and SHA256 hash are included in the result JSON file
+
 ## [3.2] -2023-05-22
 
 ### Added

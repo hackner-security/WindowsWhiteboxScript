@@ -52,7 +52,7 @@ param(
 )
 
 # Version
-$versionString = "v3.1"
+$versionString = "v3.3"
 
 # Check permissions of the following paths
 $paths += $env:ProgramFiles
@@ -94,6 +94,7 @@ $filenames = @{
     "cmdlist"              = "command_list"
     "mssql"                = "mssql_configuration"
     "nfs"                  = "nfs"
+    "drivers"              = "drivers"
 }
 
 $rememberFormatEnumerationLimit = $null
@@ -1177,6 +1178,21 @@ function Get-DeviceSecurity {
     $biosSettingsPowerShellCommand = { Get-WmiObject -Class Win32_BIOS | Format-List * }
     Invoke-PowerShellCommandAndDocumentation -scriptBlock $biosSettingsPowerShellCommand -headline "BIOS Information" -outputFile $filenames.devicesec
 
+    # Include driver paths and file hashes in order to be able to compare them with loldrivers.io (directories according to loldrivers Github repository)
+    $driversDirectories = @("C:\WINDOWS\inf", "C:\WINDOWS\System32\drivers", "C:\WINDOWS\System32\DriverStore\FileRepository")
+    $driversResults = @()
+
+    foreach ($directory in $driversDirectories) {
+        $driverFiles = Get-ChildItem -Path $directory -Recurse -File
+        foreach ($file in $driverfiles) {
+            $driversResults += @{
+                fileName = $file.Name
+                path     = $file.FullName
+                sha256   = (Get-FileHash -Algorithm SHA256 -Path $file.FullName).Hash
+            }
+        }
+    }
+    $driversResults
 }
 
 function Get-MSSQLServerConfiguration {
@@ -1284,6 +1300,7 @@ $result = @{
     $filenames.basicinfo            = Get-InsecurePowerShellVersion
     $filenames.services             = Get-SystemService
     $filenames.mssql                = Get-MSSQLServerConfiguration
+    $filenames.drivers              = Get-DeviceSecurity
 }
 
 if ($Script:psVersion.Major -ge 3) {
@@ -1360,9 +1377,6 @@ If (-Not $onlyJson) {
 
     #Check Bitlocker Information
     Get-BitlockerStatus
-
-    # Device Security (BIOS, drivers, sleep state)
-    Get-DeviceSecurity
 
     # NFS Configuration (server and client configuration)
     Get-NfsConfiguration
