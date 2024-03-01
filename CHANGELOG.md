@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Unreleased
 
+## [3.4] - 2024-03-01
+
+### Added
+
+* PowerShell cmdlet ``Get-MpComputerStatus``
+* Identifying print spooler settings (related to PrintNightmare)
+
 ## [3.3] - 2023-07-27
 
 ### Added

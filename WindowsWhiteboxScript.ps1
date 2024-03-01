@@ -52,7 +52,7 @@ param(
 )
 
 # Version
-$versionString = "v3.3"
+$versionString = "v3.4"
 
 # Check permissions of the following paths
 $paths += $env:ProgramFiles
@@ -95,6 +95,7 @@ $filenames = @{
     "mssql"                = "mssql_configuration"
     "nfs"                  = "nfs"
     "drivers"              = "drivers"
+    "spooler"              = "print_spooler"
 }
 
 $rememberFormatEnumerationLimit = $null
@@ -436,7 +437,6 @@ function Get-RDPConfiguration {
     }
     $rdpjson
 }
-
 function Get-UnquotedServicePath {
 
     $services = get-wmiobject -query 'select * from win32_service'
@@ -623,8 +623,10 @@ function Get-FileAndPermission {
 #Checks installed Antivirus products
 function Get-AntiVirusProduct {
 
-    $defenderSettingsPowerShellCommand = { Get-MpPreference }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderSettingsPowerShellCommand -headline "Defender Settings" -outputFile $filenames.antivirus
+    $defenderSettings1PowerShellCommand = { Get-MpComputerStatus }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderSettings1PowerShellCommand -headline "Defender Settings: MpComputerStatus" -outputFile $filenames.antivirus
+    $defenderSettings2PowerShellCommand = { Get-MpPreference }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderSettings2PowerShellCommand -headline "Defender Settings: MpPreference" -outputFile $filenames.antivirus
     $defenderExclusionPathPowerShellCommand = { Get-MpPreference | Select-Object -ExpandProperty ExclusionPath }
     Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderExclusionPathPowerShellCommand -headline "Defender Exclusion Path" -outputFile $filenames.antivirus
     $defenderExclusionIpAddressPowerShellCommand = { Get-MpPreference | Select-Object -ExpandProperty ExclusionIpAddress }
@@ -1273,6 +1275,49 @@ function Get-NfsConfiguration {
 
 }
 
+function Get-PrintSpoolerConfiguration {
+
+    # Get print spooler service
+    $spoolerService = Get-WmiObject win32_service | Where-Object { $_.name -eq "spooler" } | Select-Object Name, StartMode, State, Status
+
+    $pointAndPrintRegistry = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint"
+    $pointAndPrintKey1 = "NoWarningNoElevationOnInstall"
+    $pointAndPrintKey2 = "UpdatePromptSettings"
+    $restrictToAdminsKey = "RestrictDriverInstallationToAdministrators"
+
+    $pointAndPrintNoWarningNoElevationOnInstall = Get-RegistryValue -path $pointAndPrintRegistry -key $pointAndPrintKey1 -outputFile $filenames.spooler
+    $pointAndPrintUpdatePromptSettings = Get-RegistryValue -path $pointAndPrintRegistry -key $pointAndPrintKey2 -outputFile $filenames.spooler
+    $pointAndPrintRestrictToAdmins = Get-RegistryValue -path $pointAndPrintRegistry -key $restrictToAdminsKey -outputFile $filenames.spooler
+
+    $packagePointAndPrintRegistry = "HKLM:\Software\Policies\Microsoft\Windows NT\Printers\PackagePointAndPrint"
+    $packagePointAndPrintOnlyKey = "PackagePointAndPrintOnly"
+    $packagePointAndPrintServerListKey = "PackagePointAndPrintServerList"
+    $packagePointAndPrintServerListFolder = "ListofServers"
+
+    $packagePointAndPrintOnly = Get-RegistryValue -path $packagePointAndPrintRegistry -key $packagePointAndPrintOnlyKey -outputFile $filenames.spooler
+    $packagePointAndPrintServerList = Get-RegistryValue -path $packagePointAndPrintRegistry -key $packagePointAndPrintServerListKey -outputFile $filenames.spooler
+    $packagePointAndPrintServers = @()
+    if ($packagePointAndPrintServerList -ne -1) {
+        $packagePointAndPrintServers = Get-Item "$packagePointAndPrintRegistry\$packagePointAndPrintServerListFolder\" | Select-Object -ExpandProperty Property
+    }
+
+    $clientConnectRegistry = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Printers"
+    $clientConnectKey = "RegisterSpoolerRemoteRpcEndPoint"
+    $clientConnect = Get-RegistryValue -path $clientConnectRegistry -key $clientConnectKey -outputFile $filenames.spooler
+
+    $pointAndPrintJson += @{
+        service                               = $spoolerService
+        $pointAndPrintKey1                    = $pointAndPrintNoWarningNoElevationOnInstall
+        $pointAndPrintKey2                    = $pointAndPrintUpdatePromptSettings
+        $restrictToAdminsKey                  = $pointAndPrintRestrictToAdmins
+        $packagePointAndPrintOnlyKey          = $packagePointAndPrintOnly
+        $packagePointAndPrintServerListKey    = $packagePointAndPrintServerList
+        $packagePointAndPrintServerListFolder = $packagePointAndPrintServers
+        $clientConnectKey                     = $clientConnect
+    }
+    $pointAndPrintJson
+}
+
 ###############################
 ### Main Part of the Script ###
 ###############################
@@ -1301,6 +1346,7 @@ $result = @{
     $filenames.services             = Get-SystemService
     $filenames.mssql                = Get-MSSQLServerConfiguration
     $filenames.drivers              = Get-DeviceSecurity
+    $filenames.spooler              = Get-PrintSpoolerConfiguration
 }
 
 if ($Script:psVersion.Major -ge 3) {
