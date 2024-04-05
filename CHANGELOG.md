@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Unreleased
 
+## [3.5] - 2024-04-05
+
+### Fixed
+
+* Prevent the prompt for enabling the winrm service if it is not running
+
 ## [3.4] - 2024-03-01
 
 ### Added

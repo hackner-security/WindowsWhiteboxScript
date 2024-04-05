@@ -52,7 +52,7 @@ param(
 )
 
 # Version
-$versionString = "v3.4"
+$versionString = "v3.5"
 
 # Check permissions of the following paths
 $paths += $env:ProgramFiles
@@ -1030,66 +1030,52 @@ function Get-BitlockerStatus {
 
 function Get-PSRemoting {
 
-    $psremote = Get-Service WinRM | Select-Object MachineName, Name, Status, StartType, Startup
+    $winRMService = Get-WmiObject win32_service | Where-Object { $_.Name -eq "WinRM" } | Select-Object Name, DisplayName, StartMode, State
     Write-Data -Output "[*] WinRM Service Status:" -File $filenames.psremote
-    Write-Data -Output $psremote -File $filenames.psremote
+    Write-Data -Output $winRMService -File $filenames.psremote
 
-    # We quickly create a PS remoting session here in order to determine whether this is possible
-    $success = New-PSSession localhost
-    if ($success) {
-        # If PS remoting is enabled, the created session is deleted
-        Remove-PSSession $success
-        Write-Data -Output ("[*] PSRemoting is enabled.") -File $filenames.psremote
+    if ($winRMService.State -eq "Running") {
+        # Retrieve all importan PS remoting settings, collect them for the JSON file
+        $listener = (Get-ChildItem -Recurse wsman:\localhost\listener | Select-Object PSPath, Name, Value)
+        Write-Data -Output "[*] PSRemoting Listener Settings:" -File $filenames.psremote
+        Write-Data -Output $listener -File $filenames.psremote
+        $shell = (Get-ChildItem -Recurse wsman:\localhost\shell | Select-Object PSPath, Name, Value)
+        Write-Data -Output "[*] PSRemoting Shell Settings:" -File $filenames.psremote
+        Write-Data -Output $shell -File $filenames.psremote
+        $service = (Get-ChildItem -Recurse wsman:\localhost\service | Select-Object PSPath, Name, Value)
+        Write-Data -Output "[*] PSRemoting Service Settings:" -File $filenames.psremote
+        Write-Data -Output $service -File $filenames.psremote
+        $permissions = Get-PSSessionConfiguration
+        Write-Data -Output "[*] PSRemoting Permissions:" -File $filenames.psremote
+        Write-Data -Output $permissions -File $filenames.psremote
+
+        # In case we missed something, use the winrm cmd command
+        $winrmCmdCommand = "winrm get winrm/config"
+        Invoke-CmdCommandAndDocumentation -command $winrmCmdCommand -outputFile $filenames.psremote
     }
     else {
-        Write-Data -Output ("[*] PSRemoting is disabled.") -File $filenames.psremote
-        $psremotingjson += @{
-            psremotingenabled = $false
-        }
-        $psremotingjson
+        $listener = $null
+        $shell = $null
+        $service = $null
+        $permissions = $null
     }
 
-    # Retrieve all importan PS remoting settings, collect them for the JSON file
-    $listener = (Get-ChildItem -Recurse wsman:\localhost\listener | Select-Object PSPath, Name, Value)
-    Write-Data -Output "[*] PSRemoting Listener Settings:" -File $filenames.psremote
-    Write-Data -Output $listener -File $filenames.psremote
-    $shell = (Get-ChildItem -Recurse wsman:\localhost\shell | Select-Object PSPath, Name, Value)
-    Write-Data -Output "[*] PSRemoting Shell Settings:" -File $filenames.psremote
-    Write-Data -Output $shell -File $filenames.psremote
-    $service = (Get-ChildItem -Recurse wsman:\localhost\service | Select-Object PSPath, Name, Value)
-    Write-Data -Output "[*] PSRemoting Service Settings:" -File $filenames.psremote
-    Write-Data -Output $service -File $filenames.psremote
-    $permissions = Get-PSSessionConfiguration
-    Write-Data -Output "[*] PSRemoting Permissions:" -File $filenames.psremote
-    Write-Data -Output $permissions -File $filenames.psremote
-
-    # PS Remoring Firewall rules
+    # PS Remoting Firewall rules
     # Not supported on older systems: Get-NetFirewallRule
     # $firewall = (Get-NetFirewallRule -DisplayName 'Windows Remote Management (HTTP-In)'| Select -Property DisplayName, Profile, Enabled)
     $firewall = New-Object -ComObject HNetCfg.FwPolicy2
-    $remotingrules = $firewall.Rules | Select-Object name | Select-String "Windows Remote Management" | Select-Object *
+    $remotingrules = $firewall.Rules | Where-Object { $_.Name.Contains("Windows Remote Management") }
     if ($remotingrules) {
         Write-Data -Output "[*] Firewall Rules for PSRemoting:" -File $filenames.psremote
         Write-Data -Output $remotingrules -File $filenames.psremote
     }
 
-    # There is a certain impact of this being 1
-    Write-Data -Output "[*] Check orphaned LocalAccountTokenFilterPolicy" -File $filenames.psremote
-    $localAccountTokenFilterPolicyRegistry = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
-    $localAccountTokenFiterPolicyKey = "LocalAccountTokenFilterPolicy"
-    Get-RegistryValue -path $localAccountTokenFilterPolicyRegistry -key $localAccountTokenFiterPolicyKey -outputFile $filenames.psremote
-
-    # In case we missed something, use the winrm cmd command
-    $winrmCmdCommand = "winrm get winrm/config"
-    Invoke-CmdCommandAndDocumentation -command $winrmCmdCommand -outputFile $filenames.psremote
-
     $psremotejson += @{
-        psremotingenabled             = $true
-        listener                      = $listener
-        shell                         = $shell
-        service                       = $service
-        permissions                   = $permissions
-        LocalAccountTokenFilterPolicy = $token
+        winRMService = $winRMService
+        listener     = $listener
+        shell        = $shell
+        service      = $service
+        permissions  = $permissions
     }
 
     $psremotejson
