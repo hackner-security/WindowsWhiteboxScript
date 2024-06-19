@@ -52,7 +52,7 @@ param(
 )
 
 # Version
-$versionString = "v3.5"
+$versionString = "v3.6"
 
 # Check permissions of the following paths
 $paths += $env:ProgramFiles
@@ -96,6 +96,7 @@ $filenames = @{
     "nfs"                  = "nfs"
     "drivers"              = "drivers"
     "spooler"              = "print_spooler"
+    "asrrules"             = "asr_rules"
 }
 
 $rememberFormatEnumerationLimit = $null
@@ -374,22 +375,19 @@ function Get-UserInformation {
 
 function Get-WSUS {
 
+    $wsusAURegistry = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+    $useWUServerKey = "UseWUServer"
+
     $wsusRegistry = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
     $wuServerKey = "WUServer"
     $wuStatusServerKey = "WUStatusServer"
 
+    $useWUServer = Get-RegistryValue -path $wsusAURegistry -key $useWUServerKey -outputFile $filenames.wsus
     $wuServer = Get-RegistryValue -path $wsusRegistry -key $wuServerKey -outputFile $filenames.wsus
     $wuStatusServer = Get-RegistryValue -path $wsusRegistry -key $wuStatusServerKey -outputFile $filenames.wsus
 
-    if ($wuServer -eq -1) {
-        $WSUSServerUsed = $false
-    }
-    else {
-        $WSUSServerUsed = $true
-    }
-
     $wsus = @{
-        "WSUSServerUsed"   = $WSUSServerUsed
+        $useWUServerKey    = $useWUServer
         $wuServerKey       = $wuServer
         $wuStatusServerKey = $wuStatusServer
     }
@@ -1213,6 +1211,7 @@ function Get-MSSQLServerConfiguration {
         # Find the registry name of the instance (because, this is usually prepended by MSSQLxy)
         $instanceRegistryName = (Get-ItemProperty "$mssqlRegistryRoot\Instance Names\SQL")."$instanceName"
         $forceEncryption = (Get-ItemProperty "$mssqlRegistryRoot\$instanceRegistryName\MSSQLServer\SuperSocketNetLib")."ForceEncryption"
+        $currentVersion = (Get-ItemProperty "$mssqlRegistryRoot\$instanceRegistryName\MSSQLServer\CurrentVersion")."CurrentVersion"
         $certificateHash = (Get-ItemProperty "$mssqlRegistryRoot\$instanceRegistryName\MSSQLServer\SuperSocketNetLib")."Certificate"
         $certificate = $null
         if ($certificateHash) {
@@ -1229,12 +1228,13 @@ function Get-MSSQLServerConfiguration {
             forceEncryption    = $forceEncryption
             certificateIssuer  = $certificate.Issuer
             certificateSubject = $certificate.Subject
+            currentVersion     = $currentVersion
         }
         $instanceResults += $instanceResult
     }
 
     # Print the relevant information to the output file, the important information is stored in the registry in "SuperSocketNetLib"
-    $mssqlRegistryPowerShellCommand = { Get-ChildItem -Recurse "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server" | Where-Object { $_ -match "SuperSocketNetLib" } }
+    $mssqlRegistryPowerShellCommand = { Get-ChildItem -Recurse "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server" | Where-Object { $_ -match "SuperSocketNetLib" -or $_ -match "CurrentVersion" } }
     Invoke-PowerShellCommandAndDocumentation -scriptBlock $mssqlRegistryPowerShellCommand -headline "Full MSSQL registry settings" -outputFile $filenames.mssql
 
     $mssqlResults = @{
@@ -1304,6 +1304,45 @@ function Get-PrintSpoolerConfiguration {
     $pointAndPrintJson
 }
 
+function Get-AsrRulesConfiguration {
+    $mppref = Get-MpPreference
+    $asrRulesAction = $mppref.AttackSurfaceReductionRules_Actions
+    $asrRulesId = $mppref.AttackSurfaceReductionRules_ids
+
+    $asrRulesJson = @{}
+
+    Write-Data -Output "[*] ASR Rules" -File $filenames.asrrules
+    Write-Data -Output "[*] Use the GUIDs from here to match to the rulenames https://learn.microsoft.com/en-us/microsoft-365/security/defender-endpoint/attack-surface-reduction-rules-reference?view=o365-worldwide#asr-rule-to-guid-matrix" -File $filenames.asrrules
+    Write-Data -Output "[*] For the action the values mean: 0 = Not Enabled; 1 = Enabled; 2 = Audit; 6 = Warning; All others are not defined" -File $filenames.asrrules
+    if ([string]::isnullorempty($asrRulesId)) {
+        Write-Data -Output "[-] No ASR Rules configured" -File $filenames.asrrules
+        $asrRulesJson += @{
+            "asrRulesConfigured" = $false
+        }
+    }
+    else {
+        $asrRulesJson += @{
+            "asrRulesConfigured" = $true
+        }
+        $count = 0
+        $rules = @{}
+        while ($count -lt $asrRulesId.Count) {
+            $asrRulesIdLower = $asrRulesId[$count].toLower()
+            $rules += @{
+                $asrRulesIdLower = $asrRulesAction[$count]
+            }
+            $temp1 = $asrRulesId[$count]
+            $temp2 = $asrRulesAction[$count]
+            Write-Data -Output "$temp1`t:`t$temp2" -File $filenames.asrrules
+            $count = $count + 1
+        }
+        $asrRulesJson += @{
+            "rules" = $rules
+        }
+    }
+    $asrRulesJson
+}
+
 ###############################
 ### Main Part of the Script ###
 ###############################
@@ -1333,6 +1372,7 @@ $result = @{
     $filenames.mssql                = Get-MSSQLServerConfiguration
     $filenames.drivers              = Get-DeviceSecurity
     $filenames.spooler              = Get-PrintSpoolerConfiguration
+    $filenames.asrrules             = Get-AsrRulesConfiguration
 }
 
 if ($Script:psVersion.Major -ge 3) {
@@ -1417,6 +1457,7 @@ If (-Not $onlyJson) {
     if ($PSBoundParameters.ContainsKey("captureTraffic")) {
         Invoke-NetworkTrafficCapture -seconds $captureTraffic -outputPath "$outputdir\traffic.etl"
     }
+
 }
 
 #Do some error reporting

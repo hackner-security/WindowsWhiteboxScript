@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Unreleased
 
+## [3.6] - 2024-06-19
+
+### Added
+
+* Check for Attack Surface Reduction (ASR) rules
+* Check for MSSQL server version
+
+### Fixed
+
+* Correct registry values to check whether the configured WSUS server is used
+
 ## [3.5] - 2024-04-05
 
 ### Fixed
