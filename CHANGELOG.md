@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Unreleased
 
+## [3.7] - 2024-08-28
+
+### Added
+
+* Second try for network capture in case the first one does not work
+* Extract Windows build number
+
+### Fixed
+
+* Corrected registry value for the most recent patch of MSSQL
+
 ## [3.6] - 2024-06-19
 
 ### Added
