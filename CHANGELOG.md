@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Unreleased
 
+## [3.7.1] - 2024-10-28
+
+### Changed
+
+* Refactoring, adding comments and increased the verbosity of the script output
+
 ## [3.7] - 2024-08-28
 
 ### Added

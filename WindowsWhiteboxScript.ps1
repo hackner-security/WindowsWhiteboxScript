@@ -1,4 +1,4 @@
-﻿#REQUIRES -version 2.0
+﻿#Requires -version 2.0
 
 <#
 .SYNOPSIS
@@ -40,6 +40,7 @@
     Generate a list of commands that could be executed individually
 #>
 param(
+    [string] $outputdir = (Get-Item -Path ".\").FullName,
     [string[]] $paths = @(),
     [switch] $force = $false,
     [switch] $testing = $false,
@@ -47,16 +48,16 @@ param(
     [switch] $dumpPermissions = $false,
     [switch] $onlyJson = $false,
     [int] $captureTraffic,
-    [string] $outputdir = (Get-Item -Path ".\").FullName + "\" + $ENV:ComputerName,
     [switch] $generateCommandList
 )
 
 # Version
-$versionString = "v3.7"
+$versionString = "v3.7.1"
 
 # Check permissions of the following paths
 $paths += $env:ProgramFiles
 $paths += ${env:ProgramFiles(x86)}
+$outputdir = "$outputdir\$ENV:ComputerName"
 
 # File and section names
 $filenames = @{
@@ -102,16 +103,17 @@ $filenames = @{
 $rememberFormatEnumerationLimit = $null
 $psVersion = $null
 $outputFileContents = @{}
+$Script:InformationPreference = "Continue"
 
 function Invoke-Setup {
 
-    #If version parameter is specified, only display version of script and exit
+    # If version parameter is specified, only display version of script and exit
     if ($script:version) {
         Write-Output "Script Version: $versionString"
         Exit
     }
 
-    #Check for administrator privileges
+    # Check for administrator privileges
     $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
     $isAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
@@ -120,7 +122,7 @@ function Invoke-Setup {
         Exit
     }
 
-    #Remove previously generated folders
+    # Remove previously generated folders
     if ($script:testing) {
         Remove-Item -Recurse $outputdir
         Remove-Item $outputdir
@@ -130,13 +132,13 @@ function Invoke-Setup {
         $script:ErrorActionPreference = "SilentlyContinue"
     }
 
-    #Create output directory if they do not already exist
+    # Create output directory if they do not already exist
     if (!(Test-Path "$outputdir")) {
         New-Item -ItemType directory -Path $outputdir | Out-Null
     }
 
     $Script:startTime = Get-Date -UFormat '%Y/%m/%d %H:%M'
-    Write-Data -Output "${script:startTime}: Started script execution." -File $filenames.logfile -useWriteOutput
+    Write-Data -Output "Started script execution." -File $filenames.logfile -useWriteOutput
 
     # Store the script version in log files
     Write-Data -Output "Script version: $versionString" -File $filenames.logfile -useWriteOutput
@@ -144,6 +146,7 @@ function Invoke-Setup {
     # Print the powershell version
     $Script:psversion = $PSVersionTable.PSVersion
     Write-Data -Output "Powershell version: $($psversion.Major).$($psversion.Minor)" -File $filenames.logfile -useWriteOutput
+    Write-Data -Output "Output directory: $outputdir" -File $filenames.logfile -useWriteOutput
 
     #Change the enumeration limit, so our outputs do not get truncated on 4 elements
     # (do to a PowerShell bug, we have to set it globally during the script execution and set at back at the end)
@@ -155,25 +158,24 @@ function Invoke-Setup {
 
 function Invoke-Teardown {
 
-    #Set enumeration limit back to what it was before
+    # Set enumeration limit back to what it was before
     $global:FormatEnumerationLimit = $script:rememberFormatEnumerationLimit
     Write-Data -Output "Reset FormatEnumerationLimit to $global:FormatEnumerationLimit" -File $filenames.logfile
 
     If (-Not $onlyJson) {
-        #Write encountered errors to log file
+        # Write encountered errors to log file
         Write-Data -Output $Error -File $filenames.errorlog
 
-        #Write output to result folder
+        # Write output to result folder
         foreach ($h in $outputFileContents.Keys) {
             Add-Content -Path "$outputdir\$h.txt" -Value $outputFileContents.Item($h)
         }
 
-        #Compress files for easier copying
+        # Compress files for easier copying
         Compress-Result
     }
 
-    $endTime = Get-Date -UFormat '%Y/%m/%d %H:%M'
-    Write-Data -Output "${endTime}: All Done." -File $filenames.logfile -useWriteOutput
+    Write-Data -Output "All Done." -File $filenames.logfile -useWriteOutput
 }
 
 #Writes to console screen and output file
@@ -181,13 +183,19 @@ function Write-Data() {
     param (
         [parameter(Mandatory = $true)] $Output,
         [parameter(Mandatory = $true)][String] $File,
-        [switch] $useWriteOutput
+        [switch] $useWriteOutput,
+        [switch] $useWriteInformation
     )
 
-    if ($useWriteOutput) {
+    if ($useWriteInformation) {
+        $time = Get-Date -UFormat '%Y/%m/%d %H:%M'
+        Write-Information -MessageData "[*] $time - $Output"
+    }
+    elseif ($useWriteOutput) {
         # Put $Output in the stream, so it is returned by the function. Use this parameter with care if you
         # are not handling the output accordingly
-        $Output
+        $time = Get-Date -UFormat '%Y/%m/%d %H:%M'
+        Write-Output "[*] $time - $Output"
     }
     else {
         Write-Debug "$Output"
@@ -296,7 +304,7 @@ function Compress-Result {
     }
     else {
 
-        #Compression method for Powershell < 5
+        # Compression method for Powershell < 5
         if (-not (Test-Path($zipFile))) {
             Set-Content $zipFile ("PK" + [char]5 + [char]6 + ("$([char]0)" * 18))
             (Get-ChildItem $zipFile).IsReadOnly = $false
@@ -308,8 +316,8 @@ function Compress-Result {
 
         foreach ($file in $files) {
             $zipPackage.CopyHere($file.FullName)
-            #using this method, sometimes files can be 'skipped'
-            #this 'while' loop checks each file is added before moving to the next
+            # using this method, sometimes files can be 'skipped'
+            # this 'while' loop checks each file is added before moving to the next
             while ($null -eq $zipPackage.Items().Item($file.name)) {
                 Start-Sleep -Milliseconds 250
             }
@@ -318,599 +326,7 @@ function Compress-Result {
     }
 }
 
-#Check ports using "netstat -ano" and print the corresponding process names for the process IDs
-function Get-OpenPort {
-
-    $openPortsWithProcessesPowerShellCommand = { netstat.exe -ano | Select-String -Pattern "(TCP|UDP)" | ForEach-Object { $splitArray = $_ -split " "; $processId = $splitArray[-1]; $processName = Get-Process | Where-Object { $_.id -eq $processId } | Select-Object processname; $splitArray[-1] = $processId + "`t" + $processName.ProcessName; $splitArray -join " " } }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $openPortsWithProcessesPowerShellCommand -headline "Open Ports with Process Names" -outputFile $filenames.openports
-
-    $openPortsElevatedCmdCommand = "netstat.exe -anob"
-    Invoke-CmdCommandAndDocumentation -command $openPortsElevatedCmdCommand -outputFile $filenames.openports
-}
-
-# Check general information about OS users
-# In case the system locale is set to German, the German commands are additionally added here
-function Get-UserInformation {
-
-    Write-Data "### Query General OS User Information ###" -File $filenames.groups
-    $whoamiCmdCommand = "whoami /all"
-    Invoke-CmdCommandAndDocumentation -command $whoamiCmdCommand -outputFile $filenames.groups
-
-    $localUsersPowerShellCommand = { Get-WmiObject -Class Win32_UserAccount -Filter  "LocalAccount='True'" | Format-Table -AutoSize PSComputername, Name, Status, Disabled, AccountType, Lockout, PasswordRequired, PasswordChangeable, SID | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $localUsersPowerShellCommand -headline "List local users" -outputFile $filenames.groups
-
-    $localGroupPowerShellCommand = { Get-WmiObject win32_group -Filter "LocalAccount='True'" | Format-Table -AutoSize | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $localGroupPowerShellCommand -headline "List local groups" -outputFile $filenames.groups
-
-    Write-Data -Output "### List local group members ###" -File $filenames.groups
-    $Groups = Get-WmiObject win32_group -Filter "LocalAccount='True'"
-    $data = @()
-    Foreach ($Group in $Groups) {
-
-        $groupName = $Group.Name
-        If (net localgroup $groupName) {
-
-            # Invoke-CmdCommandAndDocumentation -command "net localgroup `"$groupName`"" -outputFile $filenames.groups
-            # Adds all local groups to the command list :( .. but something like this could work here
-
-            $members = net localgroup $groupName | Where-Object { $_ }
-            if ($members.Count -gt 5) {
-                $members = $members[4..$($members.Count - 2)]
-                $groupobject = @{
-                    Group   = $Group.Name
-                    Members = $members
-                }
-                $data += $groupobject
-            }
-        }
-    }
-    Write-Data -Output ($data | ForEach-Object { [PSCustomObject]$_ } | Format-Table -AutoSize | Out-String -Width 4096) -File $filenames.groups
-
-    $netAccountsCmdCommand = "net accounts"
-    Invoke-CmdCommandAndDocumentation -command $netAccountsCmdCommand -outputFile $filenames.groups
-    $netAccountsDomainCmdCommand = " net accounts /domain"
-    Invoke-CmdCommandAndDocumentation -command $netAccountsDomainCmdCommand -outputFile $filenames.groups
-
-}
-
-function Get-WSUS {
-
-    $wsusAURegistry = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
-    $useWUServerKey = "UseWUServer"
-
-    $wsusRegistry = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
-    $wuServerKey = "WUServer"
-    $wuStatusServerKey = "WUStatusServer"
-
-    $useWUServer = Get-RegistryValue -path $wsusAURegistry -key $useWUServerKey -outputFile $filenames.wsus
-    $wuServer = Get-RegistryValue -path $wsusRegistry -key $wuServerKey -outputFile $filenames.wsus
-    $wuStatusServer = Get-RegistryValue -path $wsusRegistry -key $wuStatusServerKey -outputFile $filenames.wsus
-
-    $wsus = @{
-        $useWUServerKey    = $useWUServer
-        $wuServerKey       = $wuServer
-        $wuStatusServerKey = $wuStatusServer
-    }
-    $wsus
-}
-
-#Check RDP Configuration
-function Get-RDPConfiguration {
-
-    Write-Data -Output "### RDP Configuration ###" -File $filenames.rdp
-    Write-Data -Output "NLA: 0: Disabled, 1: Enabled" -File $filenames.rdp
-    Write-Data -Output "Encryption levels: 1: Low, 2: Client Compatible, 3: High, 4: FIPS (Federal Information Processing Standard 140-1)" -File $filenames.rdp
-    Write-Data -Output "Security Layer: 0: Native RDP Encryption (not recommended), 1: Negotiate (Most secure version of client), 2: SSL/TLS (recommended)" -File $filenames.rdp
-
-    $fDenyTSConnectionsRegistry = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\"
-    $fDenyTSConnectionsKey = "fDenyTSConnections"
-    $fDenyTSConnections = Get-RegistryValue -path $fDenyTSConnectionsRegistry -key $fDenyTSConnectionsKey -outputFile $filenames.rdp
-
-    $rdpRegistry = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
-    $nlaKey = "UserAuthentication"
-    $nlaValue = Get-RegistryValue -path $rdpRegistry -key $nlaKey -outputFile $filenames.rdp
-    $encryptionLevelKey = "MinEncryptionLevel"
-    $encryptionLevel = Get-RegistryValue -path $rdpRegistry -key $encryptionLevelKey -outputFile $filenames.rdp
-    $securityLayerKey = "SecurityLayer"
-    $securityLayer = Get-RegistryValue -path $rdpRegistry -key $securityLayerKey -outputFile $filenames.rdp
-
-    # First, lets find out the hash of the used RDP certificate, then get the certificate matching the hash
-    $certificateHash = (Get-WmiObject -class "Win32_TSGeneralSetting" -Namespace root\cimv2\terminalservices | Where-Object { $_.TerminalName -eq "RDP-Tcp" }).SSLCertificateSHA1Hash
-    $certificate = Get-ChildItem -Path "Cert:\LocalMachine\" -Recurse | Where-Object { $_.Thumbprint -eq "$certificateHash" }
-
-    # One liner for printing the certificate info to the text file
-    $rdpCertificatePowerShellCommand = { Get-ChildItem -Path "Cert:\LocalMachine\" -Recurse | Where-Object { $_.Thumbprint -eq ((Get-WmiObject -class "Win32_TSGeneralSetting" -Namespace root\cimv2\terminalservices | Where-Object { $_.TerminalName -eq "RDP-Tcp" }).SSLCertificateSHA1Hash) } | Format-List | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $rdpCertificatePowerShellCommand -headline "RDP Certificate Information" -outputFile $filenames.rdp
-
-    $base64 = $([Convert]::ToBase64String($certificate.Export('Cert'), [System.Base64FormattingOptions]::InsertLineBreaks))
-    $base64certificate = "-----BEGIN CERTIFICATE-----`n$base64`n-----END CERTIFICATE-----"
-    Write-Data -Output $base64certificate -File $filenames.rdp
-    $rdpjson += @{
-        fDenyTSConnections = $fDenyTSConnections
-        nla                = $nlaValue
-        encryption         = $encryptionLevel
-        securityLayer      = $securityLayer
-        certificateIssuer  = $certificate.Issuer
-        certificateSubject = $certificate.Subject
-    }
-    $rdpjson
-}
-function Get-UnquotedServicePath {
-
-    $services = get-wmiobject -query 'select * from win32_service'
-    $servicesJson = New-Object System.Collections.ArrayList
-    ForEach ($service in $services) {
-        If ($service.pathname -match '^[^\\"].+\s.+\.exe') {
-
-            $serviceName = $service.name
-            $displayName = $service.displayname
-            $servicePath = $service.pathname
-
-            $subPaths = $servicePath.Split()
-            $rememberPath = ""
-            $permissions = New-Object System.Collections.ArrayList
-            $len = $subPaths.Count
-            $counter = 0
-
-            foreach ($subPath in $subPaths) {
-                # We do not need to check the last path (only the parts that are affected due to the unquoted service
-                if ($counter -eq ($len - 1)) {
-                    break
-                }
-                $rememberPath = "$rememberPath $subPath".Trim()
-                if (!(Test-Path $rememberPath)) {
-                    $checkPath = $rememberPath | Split-Path
-                }
-                else {
-                    $checkPath = $rememberPath
-                }
-                $result = Test-Writable -pathItem $checkPath
-                $permissions += $result
-                $counter += 1
-
-            }
-            $serviceObject = @{
-                serviceName = $serviceName
-                displayName = $displayName
-                user        = $service.StartName
-                state       = $service.State
-                startMode   = $service.StartMode
-                path        = $servicePath
-                permissions = $permissions
-            }
-            $servicesJson += $serviceObject
-        }
-    }
-    $servicesJson
-}
-
-# Get information about SMB settings
-# These commands might fail on earlier Powershell versions
-function Get-SmbInformation {
-
-    # Here we collect some general SMB information and put it in text files
-    $smbClientConfigurationPowerShellCommand = { Get-SmbClientConfiguration }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $smbClientConfigurationPowerShellCommand -headline "SMB Client Configuration" -outputFile $filenames.smb
-    $smbServerConfigurationPowerShellCommand = { Get-SmbServerConfiguration }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $smbServerConfigurationPowerShellCommand -headline "SMB Server Configuration" -outputFile $filenames.smb
-    $smbSharesPowerShellCommand = { Get-SmbShare | Format-Table -AutoSize Name, ScopeName, Path, Description, CurrentUsers, EncryptData, FolderEnumerationMode | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $smbSharesPowerShellCommand -headline "SMB Shares & SMB Encryption" -outputFile $filenames.smb
-    $smbSharePermissionsPowerShellCommand = { Get-SmbShareAccess (Get-SmbShare).Name | Format-Table -AutoSize | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $smbSharePermissionsPowerShellCommand -headline "SMB Share Permissions" -outputFile $filenames.smb
-    $smbShareNTFSPermissionsPowerShellCommand = { Get-SmbShare | ForEach-Object { "Share $($_.Name) on path $($_.Path)"; Get-Acl $_.Path | Select-Object -ExpandProperty Access | Format-Table -AutoSize | Out-String -Width 4096 } }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $smbShareNTFSPermissionsPowerShellCommand -headline "SMB Share NTFS Permissions" -outputFile $filenames.smb
-
-    $netShareCmdCommand = "net share"
-    Invoke-CmdCommandAndDocumentation -command $netShareCmdCommand -outputFile $filenames.smb
-    $smbConnectionPowerShellCommand = { Get-SmbConnection | Format-List * }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $smbConnectionPowerShellCommand -headline "List active SMB connections" -outputFile $filenames.smb
-    $netUseCmdCommand = "net use"
-    Invoke-CmdCommandAndDocumentation -command $netUseCmdCommand -outputFile $filenames.smb
-
-    # Find out about SMB1 support (this can also be done with Get-SmbServerConfiguration, but not on Server 2008)
-    $smbRegistry = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
-    $smb1Key = "SMB1"
-    $smb1RegistryValue = Get-RegistryValue -path $smbRegistry -key $smb1Key -outputFile $filenames.smb
-    $enableSMB1 = if ($smb1RegistryValue -eq 0) { $false } else { $true }
-
-    $smbSigningEnabledKey = "enablesecuritysignature"
-    $smbSigningRequiredKey = "requiresecuritysignature"
-
-    $smbSigningEnabled = Get-RegistryValue -path $smbRegistry -key $smbSigningEnabledKey -outputFile $filenames.smb
-    $smbSigningRequired = Get-RegistryValue -path $smbRegistry -key $smbSigningRequiredKey -outputFile $filenames.smb
-
-    $smbSigningEnabledBool = if ($smbSigningEnabled -eq 1) { $true } else { $false }
-    $smbSigningRequiredBool = if ($smbSigningRequired -eq 1) { $true } else { $false }
-
-    $smbRegistryDumpPowerShellCommand = { Get-Item "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" | ForEach-Object { Get-ItemProperty $_.pspath } | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $smbRegistryDumpPowerShellCommand -headline "Dump SMB Registry Values" -outputFile $filenames.smb
-
-    # Check for SMB Encryption Settings if the PowerShell version is greater or equal to PSv3
-    if ($Script:psVersion.Major -ge 3) {
-        $smbServerConfiguration = Get-SmbServerConfiguration
-        $encryptData = $smbServerConfiguration.EncryptData
-        $enableSMB1 = $smbServerConfiguration.EnableSMB1Protocol
-        $rejectUnencryptedAccess = $smbServerConfiguration.RejectUnencryptedAccess
-        $shares = Get-SmbShare | Select-Object Name, EncryptData
-    }
-
-    $smbSettings += @{
-        EnableSMB1               = $enableSMB1
-        EnableSecuritySignature  = $smbSigningEnabledBool
-        RequireSecuritySignature = $smbSigningRequiredBool
-        EncryptData              = $encryptData
-        RejectUnencryptedAccess  = $rejectUnencryptedAccess
-        Shares                   = $shares
-    }
-
-    $smbSettings
-}
-
-function Get-UnattendedInstallFile {
-
-    $targetFiles = @(
-        "C:\unattended.xml",
-        "C:\Windows\Panther\unattend.xml",
-        "C:\Windows\Panther\Unattend\Unattend.xml",
-        "C:\Windows\System32\sysprep.inf",
-        "C:\Windows\System32\sysprep\sysprep.xml"
-    )
-
-    Write-Data "[*] Checking for unattended install files" -File $filenames.unattend
-
-    try {
-
-        $targetFiles | Where-Object { $(Test-Path $_) -eq $true } | ForEach-Object {
-            Write-Data -Output "    [!] Found : $_" -File $filenames.unattend
-        }
-
-    }
-    catch {
-        $errorMessage = $_.Exception.Message
-        $failedItem = $_.Exception.ItemName
-        "[-] Exception : " | Set-Content $exceptionsFilePath
-        '[*] Error Message : `n', $errorMessage | Set-Content $exceptionsFilePath
-        "[*] Failed Item   : `n", $failedItem   | Set-Content $exceptionsFilePath
-    }
-}
-
-# Get installed programs (x86 and x64)
-function Get-InstalledProgram {
-
-    $installedProgramsX64PowerShellCommand = { Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | Format-Table -AutoSize DisplayName, DisplayVersion, Publisher, InstallDate | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $installedProgramsX64PowerShellCommand -headline "x64" -outputFile $filenames.installedprograms
-
-    $installedProgramsX86PowerShellCommand = { Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* | Format-Table -AutoSize DisplayName, DisplayVersion, Publisher, InstallDate | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $installedProgramsX86PowerShellCommand -headline "x86" -outputFile $filenames.installedprograms
-
-}
-
-function Get-FirewallConfiguration {
-
-    # Check firewall information using PS cmdlet
-    $firewallProfilePowerShellCommand = { Get-NetFirewallProfile }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $firewallProfilePowerShellCommand -headline "Firewall Profiles" -outputFile $filenames.firewall
-    $firewallRulePowerShellCommand = { Get-NetFirewallRule }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $firewallRulePowerShellCommand -headline "Firewall Rules" -outputFile $filenames.firewall
-
-    $netshFirewallCmdCommand = "netsh advfirewall show allprofiles"
-    Invoke-CmdCommandAndDocumentation -command $netshFirewallCmdCommand -outputFile  $filenames.firewall
-
-    $alternativeFirewallRulesPowerShellCommand = { (New-Object -ComObject HNetCfg.FwPolicy2).rules | Where-Object { $_.Enabled -eq $true } | Format-List Name, Description, ApplicationName, serviceName, Protocol, LocalPorts, LocalAddresses, RemoteAddresses, Direction | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $alternativeFirewallRulesPowerShellCommand -headline "Firewall Rules" -outputFile $filenames.firewall
-
-}
-
-#Get files and ACLs
-function Get-FileAndPermission {
-    param(
-        [Parameter(Mandatory = $true)][string[]]$paths
-    )
-
-    ForEach ($path in $paths) {
-
-        $filename = Split-Path $path -Leaf
-        Write-Data -Output "Directory $path" -File "$($filenames.aclsdirname)_$filename.txt"
-        Write-Data -Output "[Command][PS] Get-ChildItem `"$path`" -Recurse | Get-Acl | Format-List" -File "$($filenames.aclsdirname)_$filename.txt"
-        Write-Data -Output (Get-ChildItem "$path" -Recurse | Get-Acl | Format-List) -File "$($filenames.aclsdirname)_$filename.txt"
-
-    }
-
-}
-
-#Checks installed Antivirus products
-function Get-AntiVirusProduct {
-
-    $defenderSettings1PowerShellCommand = { Get-MpComputerStatus }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderSettings1PowerShellCommand -headline "Defender Settings: MpComputerStatus" -outputFile $filenames.antivirus
-    $defenderSettings2PowerShellCommand = { Get-MpPreference }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderSettings2PowerShellCommand -headline "Defender Settings: MpPreference" -outputFile $filenames.antivirus
-    $defenderExclusionPathPowerShellCommand = { Get-MpPreference | Select-Object -ExpandProperty ExclusionPath }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderExclusionPathPowerShellCommand -headline "Defender Exclusion Path" -outputFile $filenames.antivirus
-    $defenderExclusionIpAddressPowerShellCommand = { Get-MpPreference | Select-Object -ExpandProperty ExclusionIpAddress }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderExclusionIpAddressPowerShellCommand -headline "Defender Exclusion IP Address" -outputFile $filenames.antivirus
-    $defenderExclusionExtensionPowerShellCommand = { Get-MpPreference | Select-Object -ExpandProperty ExclusionExtension }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderExclusionExtensionPowerShellCommand -headline "Defender Exclusion Extension" -outputFile $filenames.antivirus
-    $defenderExclusionProcessPowerShellCommand = { Get-MpPreference | Select-Object -ExpandProperty ExclusionProcess }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderExclusionProcessPowerShellCommand -headline "Defender Exclusion Process" -outputFile $filenames.antivirus
-    $defenderExclusionRegistryPowerShellCommand = { Get-Item "HKLM:\SOFTWARE\Microsoft\Windows Defender\Exclusions\*" }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderExclusionRegistryPowerShellCommand -headline "Defender Exclusions from Registry" -outputFile $filenames.antivirus
-
-    # Check antivirus software from WMI object
-    $antiVirusWMIPowerShellCommand = { Get-WmiObject -Namespace "root\SecurityCenter2" -Class AntiVirusProduct | Format-List * | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $antiVirusWMIPowerShellCommand -headline "Query Antivirus via WMI" -outputFile $filenames.antivirus
-    $antiVirusCIMPowerShellCommand = { Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct | Format-List * | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $antiVirusCIMPowerShellCommand -headline "Query Antivirus via CIM" -outputFile $filenames.antivirus
-
-}
-
-#Dump installed patches via WMIC and PowerShell
-function Get-Patchlevel {
-
-    $installedUpdatesPowerShellCommand = { Get-WmiObject -Class Win32_QuickFixEngineering | Select-Object "Caption", "CSName", "Description", "HotFixID", "InstalledBy", "InstalledOn", @{n = "InstallDate"; e = { ([datetime]$_.psbase.properties["InstalledOn"].Value).ToString("yyyy.MM.dd") } } -ExcludeProperty InstallDate | Format-Table -AutoSize | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $installedUpdatesPowerShellCommand -headline "Installed Updates (queried with PowerShell)" -outputFile $filenames.patchlevel
-
-    $wmicQfeCmdCommand = "wmic qfe list full"
-    $wmicQfeSubPath = "Wbem"
-    Invoke-CmdCommandAndDocumentation -command $wmicQfeCmdCommand -subPath $wmicQfeSubPath -headline "Installed Patches via WMIC QFE" -outputFile $filenames.patchlevel
-
-    $installedUpdates = Get-WmiObject -Class Win32_QuickFixEngineering | Select-Object "Caption", "CSName", "Description", "HotFixID", "InstalledBy", "InstalledOn", @{n = "InstallDate"; e = { ([datetime]$_.psbase.properties["InstalledOn"].Value).ToString("yyyy.MM.dd") } } -ExcludeProperty InstallDate
-    $installedUpdates
-}
-
-#Check if AutoLogin is enabled in the registry
-function Get-AutoLogon {
-
-    $autologonRegistry = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
-    $usernameKey = "DefaultUserName"
-    $passwordKey = "DefaultPassword"
-
-    $username = Get-RegistryValue -path $autologonRegistry -key $usernameKey -outputFile $filenames.autologon
-    $password = Get-RegistryValue -path $autologonRegistry -key $passwordKey -outputFile $filenames.autologon -censor
-
-    if ($password -eq -1) {
-        $passwordSet = $false
-    }
-    else {
-        $passwordSet = $true
-    }
-
-    $autologinJson = @{
-        $usernameKey       = $username
-        DefaultPasswordSet = $passwordSet
-    }
-
-    $autologinJson
-}
-
-# Check for protocols which are spoofable by responder (NBNS, LLMNR)
-function Get-ResponderProtocol {
-
-    # NBNS Check
-    $nbns = @()
-    $nbns += Get-WmiObject win32_networkadapterconfiguration -filter 'IPEnabled=true' | Select-Object Description, TcpipNetbiosOptions
-    # Print to output file
-    $nbnsPowerShellCommand = { Get-WmiObject win32_networkadapterconfiguration -filter 'IPEnabled=true' | Format-Table -AutoSize Description, IPAddress, TcpipNetbiosOptions  | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $nbnsPowerShellCommand -headline "NBNS Settings" -outputFile $filenames.responder
-
-    # LLMNR Check
-    $llmnrRegistry = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient"
-    $llmnrKey = "EnableMulticast"
-    $llmnr = Get-RegistryValue -path $llmnrRegistry -key $llmnrKey -outputFile $filenames.responder
-
-    # MDNS Check
-    $mdnsRegistry = "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters"
-    $mdnsKey = "EnableMDNS"
-    $mdns = Get-RegistryValue -path $mdnsRegistry -key $mdnsKey -outputFile $filenames.responder
-
-    $responderJson = @{
-        nbns            = $nbns
-        enableMulticast = $llmnr
-        enableMDNS      = $mdns
-    }
-    $responderJson
-}
-
-function Get-PrivilegeEscalation {
-
-    Write-Data -Output "[*] Check registry value for AlwaysInstallElevated (0 = Disabled, 1 = Enabled, -1 = Default (Disabled))" -File $filenames.privilegeEscalation
-    Write-Data -Output "[*] Note that once the per-machine policy for AlwaysInstallElevated is enabled, any user can set their per-user setting." -File $filenames.privilegeEscalation
-
-    # Check registry key for AlwaysInstallElevated
-    $installElevatedHKCURegistry = "HKCU:\Software\Policies\Microsoft\Windows"
-    $installElevatedHKLMRegistry = "HKLM:\Software\Policies\Microsoft\Windows"
-    $installElevatedKey = "Installer"
-
-    $installElevatedHKCU = Get-RegistryValue -Path $installElevatedHKCURegistry -key $installElevatedKey -outputFile $filenames.privilegeEscalation
-    $installElevatedHKLM = Get-RegistryValue -path $installElevatedHKLMRegistry -key $installElevatedKey -outputFile $filenames.privilegeEscalation
-
-    $installElevatedJson = @{
-        HKCU = $installElevatedHKCU
-        HKLM = $installElevatedHKLM
-    }
-
-    # Check writable paths
-    $pathVariable = $env:PATH
-    [array]$paths = foreach ($entry in $pathVariable.split(";")) { $entry }
-    $writablePaths = @()
-
-    foreach ($path in $paths) {
-
-        $pathResult = Test-Writable -pathItem $path
-        if ($pathResult) {
-            $writablePaths += @{
-                pathVariable = $pathVariable
-                permissions  = $pathResult
-            }
-        }
-
-    }
-
-    $privEsc += @{
-        writablePaths = $writablePaths
-    }
-
-    # Check writable services
-    $services = Get-WmiObject win32_service
-    $writableServicePaths = @()
-    foreach ($service in $services) {
-        $servicePath = $service.PathName
-        $result = Test-Writable -pathItem $servicePath -complexServicePath
-        if ($result) {
-            $writableServicePaths += @{
-                serviceName = $service.Name
-                displayName = $service.displayname
-                user        = $service.StartName
-                state       = $service.State
-                startMode   = $service.StartMode
-                path        = $servicePath
-                permissions = $result
-            }
-        }
-    }
-
-    # Check for permission issues in scheduled tasks (only works from Windows Server 2012)
-    $scheduledTasks = Get-ScheduledTask
-    $writableTasksJson = @()
-    foreach ($task in $scheduledTasks) {
-        $actions = $task.Actions
-        $execute = $actions.Execute
-        $writableTask = Test-Writable -pathItem $execute
-        if ($writableTask) {
-            $writableTasksJson += @{
-                taskPath         = $task.TaskPath
-                taskName         = $task.TaskName
-                executePath      = $execute
-                executeArguments = $actions.Arguments
-                state            = "$($task.State)"
-                userId           = $task.Principal.UserId
-                permissions      = $writableTask
-            }
-        }
-    }
-
-    $privEsc += @{writableServicePaths = $writableServicePaths }
-    $unquotedServicePaths = @(Get-UnquotedServicePath)
-    $privEsc += @{unquotedServicePaths = $unquotedServicePaths }
-    $privEsc += @{alwaysInstallElevated = $installElevatedJson }
-    $privEsc += @{scheduledTasks = $writableTasksJson }
-
-    Write-Data -Output "[*] Writable Service Paths" -File $filenames.privilegeEscalation
-    Write-Data -Output ($writableServicePaths | ConvertTo-Json -Depth 20) -File $filenames.privilegeEscalation
-    Write-Data -Output "[*] Unquoted Service Paths" -File $filenames.privilegeEscalation
-    Write-Data -Output ($unquotedServicePaths | ConvertTo-Json -Depth 20) -File $filenames.privilegeEscalation
-    Write-Data -Output "[*] Writable Paths (PATH variable)" -File $filenames.privilegeEscalation
-    Write-Data -Output ($writablePaths | ConvertTo-Json -Depth 20) -File $filenames.privilegeEscalation
-    Write-Data -Output "[*] AlwaysInstallElevated" -File $filenames.privilegeEscalation
-    Write-Data -Output ($installElevatedJson | ConvertTo-Json -Depth 20) -File $filenames.privilegeEscalation
-    Write-Data -Output "[*] Writable Scheduled Tasks" -File $filenames.privilegeEscalation
-    Write-Data -Output ($writableTasksJson | ConvertTo-Json -Depth 20) -File $filenames.privilegeEscalation
-
-    $privEsc
-}
-
-function Get-HostInformation {
-
-    $ipv4 = @()
-    $ipv6 = @()
-    # Due to older system support we cannot use Get-NetIPAddress here
-    $adapters = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -Filter IPEnabled=TRUE
-    foreach ($adapter in $adapters) {
-        $ips = $adapter.IPAddress
-        foreach ($ip in $ips) {
-            if (($ip -like "*.*") -and ($ip -notlike "169.254.*")) {
-                # IPv4 address found (which is not a link local address according to RFC 5735)
-                $ipv4 += $ip
-            }
-            elseif ($ip -like "*:*") {
-                # IPv6 address found
-                $ipv6 += $ip
-            }
-        }
-    }
-
-    $hostJson = @{
-        hostname        = "$ENV:ComputerName"
-        domain          = "$(Get-WmiObject -namespace root\cimv2 -class win32_computersystem | Select-Object -exp domain)"
-        operatingSystem = "$((Get-WmiObject Win32_OperatingSystem).Caption)"
-        windowsVersion  = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").ReleaseId
-        build           = "$([System.Environment]::OSVersion.Version)"
-        psVersion       = "$($Script:psversion.Major).$($Script:psversion.Minor)"
-        scriptStartTime = "$Script:startTime"
-        ipv4            = $ipv4
-        ipv6            = $ipv6
-        scriptVersion   = $script:versionString
-    }
-
-    $hostJson
-}
-
-function Get-CredentialProtection {
-
-    $runaspplRegistry = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
-    $runaspplKey = "RunAsPPL"
-    $wdigestRegistry = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest"
-    $wdigestKey = "UseLogonCredential"
-    $lsaCfgFlagsRegistry = "HKLM:\System\CurrentControlSet\Control\LSA"
-    $lsaCfgFlagsKey = "LsaCfgFlags"
-
-    $runasppl = Get-RegistryValue -path $runaspplRegistry -key $runaspplKey -outputFile $filenames.credentialProtection
-    $wdigest = Get-RegistryValue -path $wdigestRegistry -key $wdigestKey -outputFile $filenames.credentialProtection
-
-    $securityServicesRunning = (Get-CimInstance -ClassName Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard).SecurityServicesRunning
-    if (!$?) {
-        $securityServicesRunning = -1
-    }
-
-    $lsaCfgFlags = Get-RegistryValue -path $lsaCfgFlagsRegistry -key $lsaCfgFlagsKey -outputFile $filenames.credentialProtection
-
-    $credentialProtection += @{
-        LSASSRunAsPPL           = $runasppl
-        WDigest                 = $wdigest
-        SecurityServicesRunning = $securityServicesRunning
-        LsaCfgFlags             = $lsaCfgFlags
-    }
-
-    $deviceGuardSettingsPowerShellCommand = { Get-CimInstance -ClassName Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $deviceGuardSettingsPowerShellCommand -headline "Device Guard Settings" -outputFile $filenames.credentialProtection
-
-    # Check for LAPS DLLs and registry settings
-    $admpwddllPowerShellCommand = { Test-Path -Path "$env:ProgramFiles\LAPS\CSE\Admpwd.dll" -Type Leaf }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $admpwddllPowerShellCommand -headline "LAPS: Check for Admpwd.dll (x64)" -outputFile $filenames.credentialProtection
-    $admpwddllx86PowerShellCommand = { Test-Path -Path "${env:ProgramFiles(x86)}\LAPS\CSE\Admpwd.dll" -Type Leaf }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $admpwddllx86PowerShellCommand -headline "LAPS: Check for Admpwd.dll (x86)" -outputFile $filenames.credentialProtection
-    $lapsRegistryPowerShellCommand = { Get-Item "HKLM:\Software\Policies\Microsoft Services\AdmPwd" | ForEach-Object { Get-ItemProperty $_.pspath } | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $lapsRegistryPowerShellCommand -headline "LAPS: Registry Settings" -outputFile $filenames.credentialProtection
-
-    $credentialProtection
-}
-
-function Get-UAC {
-
-    $uacRegistry = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
-    $adminPromptKey = "ConsentPromptBehaviorAdmin"
-    $uacEnabledKey = "EnableLUA"
-    $localAccountTokenFilterPolicyKey = "LocalAccountTokenFilterPolicy"
-    $filterAdministratorTokenKey = "FilterAdministratorToken"
-
-    $adminPrompt = Get-RegistryValue -path $uacRegistry -key $adminPromptKey -outputFile $filenames.uac
-    $uacEnabled = Get-RegistryValue -path $uacRegistry -key $uacEnabledKey -outputFile $filenames.uac
-    $localAccountTokenFilterPolicy = Get-RegistryValue -path $uacRegistry -key $localAccountTokenFilterPolicyKey -outputFile $filenames.uac
-    $filterAdministratorToken = Get-RegistryValue -path $uacRegistry -key $filterAdministratorTokenKey -outputFile $filenames.uac
-
-    $uacRegistryDumpPowerShellCommand = { Get-Item "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" | ForEach-Object { Get-ItemProperty $_.pspath } }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $uacRegistryDumpPowerShellCommand -headline "UAC Registry Dump" -outputFile $filenames.uac
-
-    $uacJson += @{
-        $adminPromptKey                   = $adminPrompt
-        $uacEnabledKey                    = $uacEnabled
-        $localAccountTokenFilterPolicyKey = $localAccountTokenFilterPolicy
-        $filterAdministratorTokenKey      = $filterAdministratorToken
-    }
-
-    $uacJson
-}
-
+# Check if the given path is writable to low-privilged accounts
 function Test-Writable {
     param(
         [string] $pathItem,
@@ -1007,8 +423,619 @@ function Test-Writable {
     $resultList
 }
 
+# Check ports using "netstat -ano" and print the corresponding process names for the process IDs
+function Get-OpenPort {
+    Write-Data -Output "Querying open network ports" -File $filenames.logfile -useWriteInformation
+    $openPortsWithProcessesPowerShellCommand = { netstat.exe -ano | Select-String -Pattern "(TCP|UDP)" | ForEach-Object { $splitArray = $_ -split " "; $processId = $splitArray[-1]; $processName = Get-Process | Where-Object { $_.id -eq $processId } | Select-Object processname; $splitArray[-1] = $processId + "`t" + $processName.ProcessName; $splitArray -join " " } }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $openPortsWithProcessesPowerShellCommand -headline "Open Ports with Process Names" -outputFile $filenames.openports
+    $openPortsElevatedCmdCommand = "netstat.exe -anob"
+    Invoke-CmdCommandAndDocumentation -command $openPortsElevatedCmdCommand -outputFile $filenames.openports
+}
+
+# Check general information about OS users
+# In case the system locale is set to German, the German commands are additionally added here
+function Get-UserInformation {
+
+    Write-Data -Output "Getting general OS user and group information" -File $filenames.logfile -useWriteInformation
+    $whoamiCmdCommand = "whoami /all"
+    Invoke-CmdCommandAndDocumentation -command $whoamiCmdCommand -outputFile $filenames.groups
+
+    $localUsersPowerShellCommand = { Get-WmiObject -Class Win32_UserAccount -Filter  "LocalAccount='True'" | Format-Table -AutoSize PSComputername, Name, Status, Disabled, AccountType, Lockout, PasswordRequired, PasswordChangeable, SID | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $localUsersPowerShellCommand -headline "List local users" -outputFile $filenames.groups
+    $localGroupPowerShellCommand = { Get-WmiObject win32_group -Filter "LocalAccount='True'" | Format-Table -AutoSize | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $localGroupPowerShellCommand -headline "List local groups" -outputFile $filenames.groups
+
+    Write-Data -Output "### List local group members ###" -File $filenames.groups
+    $Groups = Get-WmiObject win32_group -Filter "LocalAccount='True'"
+    $data = @()
+    Foreach ($Group in $Groups) {
+
+        $groupName = $Group.Name
+        If (net localgroup $groupName) {
+
+            # Invoke-CmdCommandAndDocumentation -command "net localgroup `"$groupName`"" -outputFile $filenames.groups
+            # Adds all local groups to the command list :( .. but something like this could work here
+
+            $members = net localgroup $groupName | Where-Object { $_ }
+            if ($members.Count -gt 5) {
+                $members = $members[4..$($members.Count - 2)]
+                $groupobject = @{
+                    Group   = $Group.Name
+                    Members = $members
+                }
+                $data += $groupobject
+            }
+        }
+    }
+    Write-Data -Output ($data | ForEach-Object { [PSCustomObject]$_ } | Format-Table -AutoSize | Out-String -Width 4096) -File $filenames.groups
+
+    $netAccountsCmdCommand = "net accounts"
+    Invoke-CmdCommandAndDocumentation -command $netAccountsCmdCommand -outputFile $filenames.groups
+    $netAccountsDomainCmdCommand = " net accounts /domain"
+    Invoke-CmdCommandAndDocumentation -command $netAccountsDomainCmdCommand -outputFile $filenames.groups
+
+}
+
+function Get-WSUS {
+
+    Write-Data -Output "Getting WSUS settings from registry" -File $filenames.logfile -useWriteInformation
+    $wsusAURegistry = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+    $useWUServerKey = "UseWUServer"
+
+    $wsusRegistry = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate"
+    $wuServerKey = "WUServer"
+    $wuStatusServerKey = "WUStatusServer"
+
+    $useWUServer = Get-RegistryValue -path $wsusAURegistry -key $useWUServerKey -outputFile $filenames.wsus
+    $wuServer = Get-RegistryValue -path $wsusRegistry -key $wuServerKey -outputFile $filenames.wsus
+    $wuStatusServer = Get-RegistryValue -path $wsusRegistry -key $wuStatusServerKey -outputFile $filenames.wsus
+
+    $wsus = @{
+        $useWUServerKey    = $useWUServer
+        $wuServerKey       = $wuServer
+        $wuStatusServerKey = $wuStatusServer
+    }
+    $wsus
+}
+
+# Check RDP Configuration
+function Get-RDPConfiguration {
+
+    Write-Data -Output "Querying RDP settings" -File $filenames.logfile -useWriteInformation
+    Write-Data -Output "NLA: 0: Disabled, 1: Enabled" -File $filenames.rdp
+    Write-Data -Output "Encryption levels: 1: Low, 2: Client Compatible, 3: High, 4: FIPS (Federal Information Processing Standard 140-1)" -File $filenames.rdp
+    Write-Data -Output "Security Layer: 0: Native RDP Encryption (not recommended), 1: Negotiate (Most secure version of client), 2: SSL/TLS (recommended)" -File $filenames.rdp
+
+    $fDenyTSConnectionsRegistry = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\"
+    $fDenyTSConnectionsKey = "fDenyTSConnections"
+    $fDenyTSConnections = Get-RegistryValue -path $fDenyTSConnectionsRegistry -key $fDenyTSConnectionsKey -outputFile $filenames.rdp
+
+    $rdpRegistry = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
+    $nlaKey = "UserAuthentication"
+    $nlaValue = Get-RegistryValue -path $rdpRegistry -key $nlaKey -outputFile $filenames.rdp
+    $encryptionLevelKey = "MinEncryptionLevel"
+    $encryptionLevel = Get-RegistryValue -path $rdpRegistry -key $encryptionLevelKey -outputFile $filenames.rdp
+    $securityLayerKey = "SecurityLayer"
+    $securityLayer = Get-RegistryValue -path $rdpRegistry -key $securityLayerKey -outputFile $filenames.rdp
+
+    # First, lets find out the hash of the used RDP certificate, then get the certificate matching the hash
+    $certificateHash = (Get-WmiObject -class "Win32_TSGeneralSetting" -Namespace root\cimv2\terminalservices | Where-Object { $_.TerminalName -eq "RDP-Tcp" }).SSLCertificateSHA1Hash
+    $certificate = Get-ChildItem -Path "Cert:\LocalMachine\" -Recurse | Where-Object { $_.Thumbprint -eq "$certificateHash" }
+
+    # One liner for printing the certificate info to the text file
+    $rdpCertificatePowerShellCommand = { Get-ChildItem -Path "Cert:\LocalMachine\" -Recurse | Where-Object { $_.Thumbprint -eq ((Get-WmiObject -class "Win32_TSGeneralSetting" -Namespace root\cimv2\terminalservices | Where-Object { $_.TerminalName -eq "RDP-Tcp" }).SSLCertificateSHA1Hash) } | Format-List | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $rdpCertificatePowerShellCommand -headline "RDP Certificate Information" -outputFile $filenames.rdp
+
+    $base64 = $([Convert]::ToBase64String($certificate.Export('Cert'), [System.Base64FormattingOptions]::InsertLineBreaks))
+    $base64certificate = "-----BEGIN CERTIFICATE-----`n$base64`n-----END CERTIFICATE-----"
+    Write-Data -Output $base64certificate -File $filenames.rdp
+    $rdpjson += @{
+        fDenyTSConnections = $fDenyTSConnections
+        nla                = $nlaValue
+        encryption         = $encryptionLevel
+        securityLayer      = $securityLayer
+        certificateIssuer  = $certificate.Issuer
+        certificateSubject = $certificate.Subject
+    }
+    $rdpjson
+}
+function Get-UnquotedServicePath {
+
+    Write-Data -Output "Checking for unquoted service paths" -File $filenames.logfile -useWriteInformation
+    $services = get-wmiobject -query 'select * from win32_service'
+    $servicesJson = New-Object System.Collections.ArrayList
+    ForEach ($service in $services) {
+        If ($service.pathname -match '^[^\\"].+\s.+\.exe') {
+
+            $serviceName = $service.name
+            $displayName = $service.displayname
+            $servicePath = $service.pathname
+
+            $subPaths = $servicePath.Split()
+            $rememberPath = ""
+            $permissions = New-Object System.Collections.ArrayList
+            $len = $subPaths.Count
+            $counter = 0
+
+            foreach ($subPath in $subPaths) {
+                # We do not need to check the last path (only the parts that are affected due to the unquoted service
+                if ($counter -eq ($len - 1)) {
+                    break
+                }
+                $rememberPath = "$rememberPath $subPath".Trim()
+                if (!(Test-Path $rememberPath)) {
+                    $checkPath = $rememberPath | Split-Path
+                }
+                else {
+                    $checkPath = $rememberPath
+                }
+                $result = Test-Writable -pathItem $checkPath
+                $permissions += $result
+                $counter += 1
+
+            }
+            $serviceObject = @{
+                serviceName = $serviceName
+                displayName = $displayName
+                user        = $service.StartName
+                state       = $service.State
+                startMode   = $service.StartMode
+                path        = $servicePath
+                permissions = $permissions
+            }
+            $servicesJson += $serviceObject
+        }
+    }
+    $servicesJson
+}
+
+# Check SMB configuration: SMB signing, smb encryption, file share and NTFS permissions on a high level
+function Get-SmbInformation {
+
+    Write-Data -Output "Checking SMB configuration" -File $filenames.logfile -useWriteInformation
+    $smbClientConfigurationPowerShellCommand = { Get-SmbClientConfiguration }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $smbClientConfigurationPowerShellCommand -headline "SMB Client Configuration" -outputFile $filenames.smb
+    $smbServerConfigurationPowerShellCommand = { Get-SmbServerConfiguration }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $smbServerConfigurationPowerShellCommand -headline "SMB Server Configuration" -outputFile $filenames.smb
+    $smbSharesPowerShellCommand = { Get-SmbShare | Format-Table -AutoSize Name, ScopeName, Path, Description, CurrentUsers, EncryptData, FolderEnumerationMode | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $smbSharesPowerShellCommand -headline "SMB Shares & SMB Encryption" -outputFile $filenames.smb
+    $smbSharePermissionsPowerShellCommand = { Get-SmbShareAccess (Get-SmbShare).Name | Format-Table -AutoSize | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $smbSharePermissionsPowerShellCommand -headline "SMB Share Permissions" -outputFile $filenames.smb
+    $smbShareNTFSPermissionsPowerShellCommand = { Get-SmbShare | ForEach-Object { "Share $($_.Name) on path $($_.Path)"; Get-Acl $_.Path | Select-Object -ExpandProperty Access | Format-Table -AutoSize | Out-String -Width 4096 } }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $smbShareNTFSPermissionsPowerShellCommand -headline "SMB Share NTFS Permissions" -outputFile $filenames.smb
+
+    $netShareCmdCommand = "net share"
+    Invoke-CmdCommandAndDocumentation -command $netShareCmdCommand -outputFile $filenames.smb
+    $smbConnectionPowerShellCommand = { Get-SmbConnection | Format-List * }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $smbConnectionPowerShellCommand -headline "List active SMB connections" -outputFile $filenames.smb
+    $netUseCmdCommand = "net use"
+    Invoke-CmdCommandAndDocumentation -command $netUseCmdCommand -outputFile $filenames.smb
+
+    # Find out about SMB1 support on older systems (<= Server 2008R2) because they do not have the Get-SmbServerConfiguration Cmdlet
+    $smbRegistry = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
+    $smb1Key = "SMB1"
+    $smb1RegistryValue = Get-RegistryValue -path $smbRegistry -key $smb1Key -outputFile $filenames.smb
+    $enableSMB1 = if ($smb1RegistryValue -eq 0) { $false } else { $true }
+
+    $smbSigningEnabledKey = "enablesecuritysignature"
+    $smbSigningRequiredKey = "requiresecuritysignature"
+
+    $smbSigningEnabled = Get-RegistryValue -path $smbRegistry -key $smbSigningEnabledKey -outputFile $filenames.smb
+    $smbSigningRequired = Get-RegistryValue -path $smbRegistry -key $smbSigningRequiredKey -outputFile $filenames.smb
+
+    $smbSigningEnabledBool = if ($smbSigningEnabled -eq 1) { $true } else { $false }
+    $smbSigningRequiredBool = if ($smbSigningRequired -eq 1) { $true } else { $false }
+
+    $smbRegistryDumpPowerShellCommand = { Get-Item "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" | ForEach-Object { Get-ItemProperty $_.pspath } | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $smbRegistryDumpPowerShellCommand -headline "Dump SMB Registry Values" -outputFile $filenames.smb
+
+    # Check for SMB Encryption Settings if the PowerShell version is greater or equal to PSv3
+    if ($Script:psVersion.Major -ge 3) {
+        $smbServerConfiguration = Get-SmbServerConfiguration
+        $encryptData = $smbServerConfiguration.EncryptData
+        $enableSMB1 = $smbServerConfiguration.EnableSMB1Protocol
+        $rejectUnencryptedAccess = $smbServerConfiguration.RejectUnencryptedAccess
+        $shares = Get-SmbShare | Select-Object Name, EncryptData
+    }
+
+    $smbSettings += @{
+        EnableSMB1               = $enableSMB1
+        EnableSecuritySignature  = $smbSigningEnabledBool
+        RequireSecuritySignature = $smbSigningRequiredBool
+        EncryptData              = $encryptData
+        RejectUnencryptedAccess  = $rejectUnencryptedAccess
+        Shares                   = $shares
+    }
+
+    $smbSettings
+}
+
+# Verify if there is an unattended install file somwehere on the system
+function Get-UnattendedInstallFile {
+
+    Write-Data "Checking for unattended install files" -File $filenames.unattend -File $filenames.logfile -useWriteInformation
+    $targetFiles = @(
+        "C:\unattended.xml",
+        "C:\Windows\Panther\unattend.xml",
+        "C:\Windows\Panther\Unattend\Unattend.xml",
+        "C:\Windows\System32\sysprep.inf",
+        "C:\Windows\System32\sysprep\sysprep.xml"
+    )
+
+    try {
+
+        $targetFiles | Where-Object { $(Test-Path $_) -eq $true } | ForEach-Object {
+            Write-Data -Output "    [!] Found : $_" -File $filenames.unattend
+        }
+
+    }
+    catch {
+        $errorMessage = $_.Exception.Message
+        $failedItem = $_.Exception.ItemName
+        "[-] Exception : " | Set-Content $exceptionsFilePath
+        '[*] Error Message : `n', $errorMessage | Set-Content $exceptionsFilePath
+        "[*] Failed Item   : `n", $failedItem   | Set-Content $exceptionsFilePath
+    }
+}
+
+# Get installed programs (x86 and x64)
+function Get-InstalledProgram {
+
+    Write-Data -Output "Querying installed applications" -File $filenames.logfile -useWriteInformation
+    $installedProgramsX64PowerShellCommand = { Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* | Format-Table -AutoSize DisplayName, DisplayVersion, Publisher, InstallDate | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $installedProgramsX64PowerShellCommand -headline "x64" -outputFile $filenames.installedprograms
+    $installedProgramsX86PowerShellCommand = { Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* | Format-Table -AutoSize DisplayName, DisplayVersion, Publisher, InstallDate | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $installedProgramsX86PowerShellCommand -headline "x86" -outputFile $filenames.installedprograms
+
+}
+
+function Get-FirewallConfiguration {
+
+    Write-Data -Output "Reading firewall configuration and rules" -File $filenames.logfile -useWriteInformation
+
+    $firewallProfilePowerShellCommand = { Get-NetFirewallProfile }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $firewallProfilePowerShellCommand -headline "Firewall Profiles" -outputFile $filenames.firewall
+    $firewallRulePowerShellCommand = { Get-NetFirewallRule }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $firewallRulePowerShellCommand -headline "Firewall Rules" -outputFile $filenames.firewall
+
+    $netshFirewallCmdCommand = "netsh advfirewall show allprofiles"
+    Invoke-CmdCommandAndDocumentation -command $netshFirewallCmdCommand -outputFile  $filenames.firewall
+
+    $alternativeFirewallRulesPowerShellCommand = { (New-Object -ComObject HNetCfg.FwPolicy2).rules | Where-Object { $_.Enabled -eq $true } | Format-List Name, Description, ApplicationName, serviceName, Protocol, LocalPorts, LocalAddresses, RemoteAddresses, Direction | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $alternativeFirewallRulesPowerShellCommand -headline "Firewall Rules" -outputFile $filenames.firewall
+
+}
+
+# This can be used to check file ACLs recursively, specified by the given parameter
+function Get-FileAndPermission {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$paths
+    )
+
+    Write-Data -Output "Querying ACLs for provided directories" -File $filenames.logfile -useWriteInformation
+
+    ForEach ($path in $paths) {
+
+        $filename = Split-Path $path -Leaf
+        Write-Data -Output "Directory $path" -File "$($filenames.aclsdirname)_$filename.txt"
+        Write-Data -Output "[Command][PS] Get-ChildItem `"$path`" -Recurse | Get-Acl | Format-List" -File "$($filenames.aclsdirname)_$filename.txt"
+        Write-Data -Output (Get-ChildItem "$path" -Recurse | Get-Acl | Format-List) -File "$($filenames.aclsdirname)_$filename.txt"
+
+    }
+
+}
+
+# This function tries to extract information about the antivirus software
+function Get-AntiVirusProduct {
+
+    Write-Data -Output "Getting antivirus information" -File $filenames.logfile -useWriteInformation
+    $defenderSettings1PowerShellCommand = { Get-MpComputerStatus }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderSettings1PowerShellCommand -headline "Defender Settings: MpComputerStatus" -outputFile $filenames.antivirus
+    $defenderSettings2PowerShellCommand = { Get-MpPreference }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderSettings2PowerShellCommand -headline "Defender Settings: MpPreference" -outputFile $filenames.antivirus
+    $defenderExclusionPathPowerShellCommand = { Get-MpPreference | Select-Object -ExpandProperty ExclusionPath }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderExclusionPathPowerShellCommand -headline "Defender Exclusion Path" -outputFile $filenames.antivirus
+    $defenderExclusionIpAddressPowerShellCommand = { Get-MpPreference | Select-Object -ExpandProperty ExclusionIpAddress }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderExclusionIpAddressPowerShellCommand -headline "Defender Exclusion IP Address" -outputFile $filenames.antivirus
+    $defenderExclusionExtensionPowerShellCommand = { Get-MpPreference | Select-Object -ExpandProperty ExclusionExtension }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderExclusionExtensionPowerShellCommand -headline "Defender Exclusion Extension" -outputFile $filenames.antivirus
+    $defenderExclusionProcessPowerShellCommand = { Get-MpPreference | Select-Object -ExpandProperty ExclusionProcess }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderExclusionProcessPowerShellCommand -headline "Defender Exclusion Process" -outputFile $filenames.antivirus
+    $defenderExclusionRegistryPowerShellCommand = { Get-Item "HKLM:\SOFTWARE\Microsoft\Windows Defender\Exclusions\*" }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $defenderExclusionRegistryPowerShellCommand -headline "Defender Exclusions from Registry" -outputFile $filenames.antivirus
+
+    # Check antivirus software from WMI object
+    $antiVirusWMIPowerShellCommand = { Get-WmiObject -Namespace "root\SecurityCenter2" -Class AntiVirusProduct | Format-List * | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $antiVirusWMIPowerShellCommand -headline "Query Antivirus via WMI" -outputFile $filenames.antivirus
+    $antiVirusCIMPowerShellCommand = { Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct | Format-List * | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $antiVirusCIMPowerShellCommand -headline "Query Antivirus via CIM" -outputFile $filenames.antivirus
+
+}
+
+# Dump installed patches via WMIC and PowerShell
+function Get-Patchlevel {
+
+    Write-Data -Output "Querying OS updates and patch level" -File $filenames.logfile -useWriteInformation
+
+    $installedUpdatesPowerShellCommand = { Get-WmiObject -Class Win32_QuickFixEngineering | Select-Object "Caption", "CSName", "Description", "HotFixID", "InstalledBy", "InstalledOn", @{n = "InstallDate"; e = { ([datetime]$_.psbase.properties["InstalledOn"].Value).ToString("yyyy.MM.dd") } } -ExcludeProperty InstallDate | Format-Table -AutoSize | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $installedUpdatesPowerShellCommand -headline "Installed Updates (queried with PowerShell)" -outputFile $filenames.patchlevel
+
+    $wmicQfeCmdCommand = "wmic qfe list full"
+    $wmicQfeSubPath = "Wbem"
+    Invoke-CmdCommandAndDocumentation -command $wmicQfeCmdCommand -subPath $wmicQfeSubPath -headline "Installed Patches via WMIC QFE" -outputFile $filenames.patchlevel
+
+    $installedUpdates = Get-WmiObject -Class Win32_QuickFixEngineering | Select-Object "Caption", "CSName", "Description", "HotFixID", "InstalledBy", "InstalledOn", @{n = "InstallDate"; e = { ([datetime]$_.psbase.properties["InstalledOn"].Value).ToString("yyyy.MM.dd") } } -ExcludeProperty InstallDate
+    $installedUpdates
+}
+
+# Check if AutoLogin is enabled in the registry
+function Get-AutoLogon {
+
+    Write-Data -Output "Checking potential autologon configuration" -File $filenames.logfile -useWriteInformation
+    $autologonRegistry = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+    $usernameKey = "DefaultUserName"
+    $passwordKey = "DefaultPassword"
+
+    $username = Get-RegistryValue -path $autologonRegistry -key $usernameKey -outputFile $filenames.autologon
+    $password = Get-RegistryValue -path $autologonRegistry -key $passwordKey -outputFile $filenames.autologon -censor
+
+    if ($password -eq -1) {
+        $passwordSet = $false
+    }
+    else {
+        $passwordSet = $true
+    }
+
+    $autologinJson = @{
+        $usernameKey       = $username
+        DefaultPasswordSet = $passwordSet
+    }
+
+    $autologinJson
+}
+
+# Check for protocols which are spoofable by responder (NBNS, LLMNR, mDNS)
+function Get-ResponderProtocol {
+
+    Write-Data -Output "Inspecting settings for potentially spoofable protocols" -File $filenames.logfile -useWriteInformation
+    # NBNS Check
+    $nbns = @()
+    $nbns += Get-WmiObject win32_networkadapterconfiguration -filter 'IPEnabled=true' | Select-Object Description, TcpipNetbiosOptions
+    # Print to output file
+    $nbnsPowerShellCommand = { Get-WmiObject win32_networkadapterconfiguration -filter 'IPEnabled=true' | Format-Table -AutoSize Description, IPAddress, TcpipNetbiosOptions  | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $nbnsPowerShellCommand -headline "NBNS Settings" -outputFile $filenames.responder
+
+    # LLMNR Check
+    $llmnrRegistry = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient"
+    $llmnrKey = "EnableMulticast"
+    $llmnr = Get-RegistryValue -path $llmnrRegistry -key $llmnrKey -outputFile $filenames.responder
+
+    # MDNS Check
+    $mdnsRegistry = "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters"
+    $mdnsKey = "EnableMDNS"
+    $mdns = Get-RegistryValue -path $mdnsRegistry -key $mdnsKey -outputFile $filenames.responder
+
+    $responderJson = @{
+        nbns            = $nbns
+        enableMulticast = $llmnr
+        enableMDNS      = $mdns
+    }
+    $responderJson
+}
+
+# Privilege escalation checks: AlwaysInstallElevated in registry, writable tools in PATH variable,
+# writable service executables, writable paths
+function Get-PrivilegeEscalation {
+
+    Write-Data -Output "Checking for privilege escalation possibilities" -File $filenames.logfile -useWriteInformation
+    Write-Data -Output "[*] Check registry value for AlwaysInstallElevated (0 = Disabled, 1 = Enabled, -1 = Default (Disabled))" -File $filenames.privilegeEscalation
+    Write-Data -Output "[*] Note that once the per-machine policy for AlwaysInstallElevated is enabled, any user can set their per-user setting." -File $filenames.privilegeEscalation
+
+    # Check registry key for AlwaysInstallElevated
+    $installElevatedHKCURegistry = "HKCU:\Software\Policies\Microsoft\Windows"
+    $installElevatedHKLMRegistry = "HKLM:\Software\Policies\Microsoft\Windows"
+    $installElevatedKey = "Installer"
+
+    $installElevatedHKCU = Get-RegistryValue -Path $installElevatedHKCURegistry -key $installElevatedKey -outputFile $filenames.privilegeEscalation
+    $installElevatedHKLM = Get-RegistryValue -path $installElevatedHKLMRegistry -key $installElevatedKey -outputFile $filenames.privilegeEscalation
+
+    $installElevatedJson = @{
+        HKCU = $installElevatedHKCU
+        HKLM = $installElevatedHKLM
+    }
+
+    # Check writable paths
+    $pathVariable = $env:PATH
+    [array]$paths = foreach ($entry in $pathVariable.split(";")) { $entry }
+    $writablePaths = @()
+
+    foreach ($path in $paths) {
+
+        $pathResult = Test-Writable -pathItem $path
+        if ($pathResult) {
+            $writablePaths += @{
+                pathVariable = $pathVariable
+                permissions  = $pathResult
+            }
+        }
+
+    }
+
+    $privEsc += @{
+        writablePaths = $writablePaths
+    }
+
+    # Check for writable services executables for low-privileged accounts
+    $services = Get-WmiObject win32_service
+    $writableServicePaths = @()
+    foreach ($service in $services) {
+        $servicePath = $service.PathName
+        $result = Test-Writable -pathItem $servicePath -complexServicePath
+        if ($result) {
+            $writableServicePaths += @{
+                serviceName = $service.Name
+                displayName = $service.displayname
+                user        = $service.StartName
+                state       = $service.State
+                startMode   = $service.StartMode
+                path        = $servicePath
+                permissions = $result
+            }
+        }
+    }
+
+    # Check for permission issues in scheduled tasks (only works from Windows Server 2012)
+    $scheduledTasks = Get-ScheduledTask
+    $writableTasksJson = @()
+    foreach ($task in $scheduledTasks) {
+        $actions = $task.Actions
+        $execute = $actions.Execute
+        $writableTask = Test-Writable -pathItem $execute
+        if ($writableTask) {
+            $writableTasksJson += @{
+                taskPath         = $task.TaskPath
+                taskName         = $task.TaskName
+                executePath      = $execute
+                executeArguments = $actions.Arguments
+                state            = "$($task.State)"
+                userId           = $task.Principal.UserId
+                permissions      = $writableTask
+            }
+        }
+    }
+
+    $privEsc += @{writableServicePaths = $writableServicePaths }
+    $unquotedServicePaths = @(Get-UnquotedServicePath)
+    $privEsc += @{unquotedServicePaths = $unquotedServicePaths }
+    $privEsc += @{alwaysInstallElevated = $installElevatedJson }
+    $privEsc += @{scheduledTasks = $writableTasksJson }
+
+    Write-Data -Output "[*] Writable Service Paths" -File $filenames.privilegeEscalation
+    Write-Data -Output ($writableServicePaths | ConvertTo-Json -Depth 20) -File $filenames.privilegeEscalation
+    Write-Data -Output "[*] Unquoted Service Paths" -File $filenames.privilegeEscalation
+    Write-Data -Output ($unquotedServicePaths | ConvertTo-Json -Depth 20) -File $filenames.privilegeEscalation
+    Write-Data -Output "[*] Writable Paths (PATH variable)" -File $filenames.privilegeEscalation
+    Write-Data -Output ($writablePaths | ConvertTo-Json -Depth 20) -File $filenames.privilegeEscalation
+    Write-Data -Output "[*] AlwaysInstallElevated" -File $filenames.privilegeEscalation
+    Write-Data -Output ($installElevatedJson | ConvertTo-Json -Depth 20) -File $filenames.privilegeEscalation
+    Write-Data -Output "[*] Writable Scheduled Tasks" -File $filenames.privilegeEscalation
+    Write-Data -Output ($writableTasksJson | ConvertTo-Json -Depth 20) -File $filenames.privilegeEscalation
+
+    $privEsc
+}
+
+function Get-HostInformation {
+
+    Write-Data -Output "Querying basic host information" -File $filenames.logfile -useWriteInformation
+    $ipv4 = @()
+    $ipv6 = @()
+    # Due to older system support we cannot use Get-NetIPAddress here
+    $adapters = Get-WmiObject -Class Win32_NetworkAdapterConfiguration -Filter IPEnabled=TRUE
+    foreach ($adapter in $adapters) {
+        $ips = $adapter.IPAddress
+        foreach ($ip in $ips) {
+            if (($ip -like "*.*") -and ($ip -notlike "169.254.*")) {
+                # IPv4 address found (which is not a link local address according to RFC 5735)
+                $ipv4 += $ip
+            }
+            elseif ($ip -like "*:*") {
+                # IPv6 address found
+                $ipv6 += $ip
+            }
+        }
+    }
+
+    $hostJson = @{
+        hostname        = "$ENV:ComputerName"
+        domain          = "$(Get-WmiObject -namespace root\cimv2 -class win32_computersystem | Select-Object -exp domain)"
+        operatingSystem = "$((Get-WmiObject Win32_OperatingSystem).Caption)"
+        windowsVersion  = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").ReleaseId
+        build           = "$([System.Environment]::OSVersion.Version)"
+        psVersion       = "$($Script:psversion.Major).$($Script:psversion.Minor)"
+        scriptStartTime = "$Script:startTime"
+        ipv4            = $ipv4
+        ipv6            = $ipv6
+        scriptVersion   = $script:versionString
+    }
+
+    Write-Data -Output $hostJson -File $filenames.host
+    $hostJson
+}
+
+# Check potential credential protection settings: credential guad, LSASS as protected process light and LAPS
+function Get-CredentialProtection {
+
+    Write-Data -Output "Verifying settings for credential protection" -File $filenames.logfile -useWriteInformation
+    $runaspplRegistry = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
+    $runaspplKey = "RunAsPPL"
+    $wdigestRegistry = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest"
+    $wdigestKey = "UseLogonCredential"
+    $lsaCfgFlagsRegistry = "HKLM:\System\CurrentControlSet\Control\LSA"
+    $lsaCfgFlagsKey = "LsaCfgFlags"
+
+    $runasppl = Get-RegistryValue -path $runaspplRegistry -key $runaspplKey -outputFile $filenames.credentialProtection
+    $wdigest = Get-RegistryValue -path $wdigestRegistry -key $wdigestKey -outputFile $filenames.credentialProtection
+
+    $securityServicesRunning = (Get-CimInstance -ClassName Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard).SecurityServicesRunning
+    if (!$?) {
+        $securityServicesRunning = -1
+    }
+
+    $lsaCfgFlags = Get-RegistryValue -path $lsaCfgFlagsRegistry -key $lsaCfgFlagsKey -outputFile $filenames.credentialProtection
+
+    $credentialProtection += @{
+        LSASSRunAsPPL           = $runasppl
+        WDigest                 = $wdigest
+        SecurityServicesRunning = $securityServicesRunning
+        LsaCfgFlags             = $lsaCfgFlags
+    }
+
+    $deviceGuardSettingsPowerShellCommand = { Get-CimInstance -ClassName Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $deviceGuardSettingsPowerShellCommand -headline "Device Guard Settings" -outputFile $filenames.credentialProtection
+
+    # Check for LAPS DLLs and registry settings
+    $admpwddllPowerShellCommand = { Test-Path -Path "$env:ProgramFiles\LAPS\CSE\Admpwd.dll" -Type Leaf }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $admpwddllPowerShellCommand -headline "LAPS: Check for Admpwd.dll (x64)" -outputFile $filenames.credentialProtection
+    $admpwddllx86PowerShellCommand = { Test-Path -Path "${env:ProgramFiles(x86)}\LAPS\CSE\Admpwd.dll" -Type Leaf }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $admpwddllx86PowerShellCommand -headline "LAPS: Check for Admpwd.dll (x86)" -outputFile $filenames.credentialProtection
+    $lapsRegistryPowerShellCommand = { Get-Item "HKLM:\Software\Policies\Microsoft Services\AdmPwd" | ForEach-Object { Get-ItemProperty $_.pspath } | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $lapsRegistryPowerShellCommand -headline "LAPS: Registry Settings" -outputFile $filenames.credentialProtection
+
+    $credentialProtection
+}
+
+# Check for User Account Control (UAC) settings in the registry
+function Get-UAC {
+
+    Write-Data -Output "Querying UAC settings from registry" -File $filenames.logfile -useWriteInformation
+    $uacRegistry = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+    $adminPromptKey = "ConsentPromptBehaviorAdmin"
+    $uacEnabledKey = "EnableLUA"
+    $localAccountTokenFilterPolicyKey = "LocalAccountTokenFilterPolicy"
+    $filterAdministratorTokenKey = "FilterAdministratorToken"
+
+    $adminPrompt = Get-RegistryValue -path $uacRegistry -key $adminPromptKey -outputFile $filenames.uac
+    $uacEnabled = Get-RegistryValue -path $uacRegistry -key $uacEnabledKey -outputFile $filenames.uac
+    $localAccountTokenFilterPolicy = Get-RegistryValue -path $uacRegistry -key $localAccountTokenFilterPolicyKey -outputFile $filenames.uac
+    $filterAdministratorToken = Get-RegistryValue -path $uacRegistry -key $filterAdministratorTokenKey -outputFile $filenames.uac
+
+    $uacRegistryDumpPowerShellCommand = { Get-Item "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" | ForEach-Object { Get-ItemProperty $_.pspath } }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $uacRegistryDumpPowerShellCommand -headline "UAC Registry Dump" -outputFile $filenames.uac
+
+    $uacJson += @{
+        $adminPromptKey                   = $adminPrompt
+        $uacEnabledKey                    = $uacEnabled
+        $localAccountTokenFilterPolicyKey = $localAccountTokenFilterPolicy
+        $filterAdministratorTokenKey      = $filterAdministratorToken
+    }
+
+    $uacJson
+}
+
+# Extract bitlocker settings via PowerShell Cmdlet and Windows executable
 function Get-BitlockerStatus {
 
+    Write-Data -Output "Querying hard drive encryption settings (Bitlocker)" -File $filenames.logfile -useWriteInformation
     $bitlockerCmdCommand = "manage-bde -status"
     Invoke-CmdCommandAndDocumentation -command $bitlockerCmdCommand -headline "Bitlocker Settings CMD" -outputFile $filenames.bitlocker
 
@@ -1020,8 +1047,10 @@ function Get-BitlockerStatus {
 
 }
 
+# Check PowerShell remoting configuration
 function Get-PSRemoting {
 
+    Write-Data -Output "Getting PowerShell remoting configuration" -File $filenames.logfile -useWriteInformation
     $winRMService = Get-WmiObject win32_service | Where-Object { $_.Name -eq "WinRM" } | Select-Object Name, DisplayName, StartMode, State
     Write-Data -Output "[*] WinRM Service Status:" -File $filenames.psremote
     Write-Data -Output $winRMService -File $filenames.psremote
@@ -1073,8 +1102,11 @@ function Get-PSRemoting {
     $psremotejson
 }
 
+# Run the secedit executable in order to get the local password policy, returning its content in order to include
+# it in the JSON output file
 function Invoke-Secedit {
 
+    Write-Data -Output "Invoking secedit for password policy checks" -File $filenames.logfile -useWriteInformation
     $seceditCmdCommand = "secedit.exe /export /cfg `"$outputdir\$($filenames.secedit)`" /quiet"
     Invoke-CmdCommandAndDocumentation -command $seceditCmdCommand -headline "Secedit.exe Security Settings" -manualCommandListOverride "secedit.exe /export /cfg $($filenames.secedit) /quiet" -outputFile $filenames.logfile
 
@@ -1088,7 +1120,10 @@ function Invoke-Secedit {
     $output
 }
 
+# Verify whether PowerShell version 2 is installed on the system
 function Get-InsecurePowerShellVersion {
+
+    Write-Data -Output "Verifying installed PowerShell versions" -File $filenames.logfile -useWriteInformation
 
     $currentPSVersionPowerShellCommand = { $PSVersionTable.PSVersion }
     Invoke-PowerShellCommandAndDocumentation -scriptBlock $currentPSVersionPowerShellCommand -headline "Currently running PowerShell version" -outputFile $filenames.basicinfo
@@ -1112,22 +1147,33 @@ function Get-InsecurePowerShellVersion {
     $ps2Json
 }
 
-function Get-SystemService {
+# Extract all services and scheduled tasks of the system
+function Get-SystemServiceAndScheduledTask {
+
+    Write-Data -Output "Getting running services and scheduled tasks" -File $filenames.logfile -useWriteInformation
 
     # The following script block is used to pretty print all services in TXT files
     $servicesPowerShellCommand = { Get-WmiObject win32_service | Select-Object ProcessId, Name, State, StartName, StartMode, PathName | Sort-Object -Property State | Format-Table -AutoSize | Out-String -Width 4096 }
     Invoke-PowerShellCommandAndDocumentation -scriptBlock $servicesPowerShellCommand -headline "Services" -outputFile $filenames.services
+
+    #Print scheduled tasks
+    $schtasksCmdCommand = "schtasks.exe /query /fo LIST /v"
+    Invoke-CmdCommandAndDocumentation -command $schtasksCmdCommand -headline "Query Scheduled Tasks" -outputFile $filenames.tasks
 
     # $services holds the information that is needed for the result JSON file
     $services = Get-WmiObject win32_service | Select-Object ProcessId, Name, State, StartName, StartMode, PathName
     $services
 }
 
+# Capture the network traffic of the local system for a certain amount of time. Since this method
+# seems to not work all the time, this is done twice if the first traffic file is not big enough
 function Invoke-NetworkTrafficCapture {
     param(
         [Parameter(Mandatory = $true)][int] $seconds,
         [Parameter(Mandatory = $true)][string] $outputPath
     )
+    Write-Data -Output "Invoking network traffic capture for $seconds seconds" -File $filenames.logfile -useWriteInformation
+
     # In case the script is interrupted using Ctrl+C, there is a finally block that will always execute
     try {
         Start-Process "$($env:windir)\System32\netsh.exe" -ArgumentList "trace start capture=yes tracefile=$outputPath\traffic1.etl" -Wait -NoNewWindow
@@ -1148,8 +1194,10 @@ function Invoke-NetworkTrafficCapture {
     }
 }
 
+# Extract kernel DMA security from registry, extract installed drivers, sleep settings, power configuration and bios settings
 function Get-DeviceSecurity {
 
+    Write-Data -Output "Checking device security settings and drivers" -File $filenames.logfile -useWriteInformation
     $kernelDmaProtectionRegistry = "HKLM:\Software\Policies\Microsoft\Windows"
     $kernelDmaProtectionKey = "Kernel DMA Protection"
     Get-RegistryValue -path $kernelDmaProtectionRegistry -key $kernelDmaProtectionKey -outputFile $filenames.devicesec | Out-Null
@@ -1183,7 +1231,10 @@ function Get-DeviceSecurity {
     $driversResults
 }
 
+# Extract if the MSSQL database communication is encrypted, the TLS certificate parameters and the MSSQL version
 function Get-MSSQLServerConfiguration {
+
+    Write-Data -Output "Identifying MSSQL configuration" -File $filenames.logfile -useWriteInformation
 
     # Check if an MSSQL service is running on the machine
     $mssqlServices = Get-WmiObject win32_service | Where-Object { $_.Name -eq "MSSQLSERVER" -or $_.Name.StartsWith("MSSQL$") -and $_.State -eq "running" }
@@ -1248,8 +1299,10 @@ function Get-MSSQLServerConfiguration {
     $mssqlResults
 }
 
+# Extract the NFS configuration if Windows uses NFS
 function Get-NfsConfiguration {
 
+    Write-Data -Output "Inspecting NFS configuration" -File $filenames.logfile -useWriteInformation
     $mountCmdCommand = "mount.exe"
     Invoke-CmdCommandAndDocumentation -command $mountCmdCommand -outputFile $filenames.nfs
     $nfsSharePowerShellCommand = { Get-NfsShare -ErrorAction SilentlyContinue | Format-List * }
@@ -1265,7 +1318,10 @@ function Get-NfsConfiguration {
 
 }
 
+# Check if the print spooler service is running and verify certain misconfigurations that could enable PrintNightmare
 function Get-PrintSpoolerConfiguration {
+
+    Write-Data -Output "Getting print spooler service settings" -File $filenames.logfile -useWriteInformation
 
     # Get print spooler service
     $spoolerService = Get-WmiObject win32_service | Where-Object { $_.name -eq "spooler" } | Select-Object Name, StartMode, State, Status
@@ -1308,7 +1364,10 @@ function Get-PrintSpoolerConfiguration {
     $pointAndPrintJson
 }
 
+# Dump attack surface reduction rules that enabled on the system
 function Get-AsrRulesConfiguration {
+
+    Write-Data -Output "Verifying installed attack surface reduction rules" -File $filenames.logfile -useWriteInformation
     $mppref = Get-MpPreference
     $asrRulesAction = $mppref.AttackSurfaceReductionRules_Actions
     $asrRulesId = $mppref.AttackSurfaceReductionRules_ids
@@ -1347,6 +1406,49 @@ function Get-AsrRulesConfiguration {
     $asrRulesJson
 }
 
+# Extract basic information about the system: proxy settings, cmdlet Get-ComputerInfo and information in win32_operatingsystem
+function Get-BasicSystemInformation {
+    Write-Data -Output "Querying basic system information" -File $filenames.logfile -useWriteInformation
+    $proxySettingsPowerShellCommand = { Get-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" | ForEach-Object { Get-ItemProperty $_.pspath } | Out-String }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $proxySettingsPowerShellCommand -headline "Query Proxy and Internet Settings from Registry" -outputFile $filenames.basicinfo
+    $computerInfoPowerShellCommand = { Get-ComputerInfo }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $computerInfoPowerShellCommand -headline "Computer Info PowerShell" -outputFile $filenames.basicinfo
+    $computerInfoWMIPowerShellCommand = { Get-WmiObject win32_operatingsystem | Format-List * | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $computerInfoWMIPowerShellCommand -headline "Computer Info WMI" -outputFile $filenames.basicinfo
+}
+
+# Get basic network information: IP configuration, routing information and the ARP table
+function Get-NetworkConfiguration {
+    Write-Data -Output "Getting the system network information (IP addresses, interfaces, routes, ARP table)" -File $filenames.logfile -useWriteInformation
+    $ipconfigCmdCommand = "ipconfig.exe /all"
+    Invoke-CmdCommandAndDocumentation -command $ipconfigCmdCommand -headline "Query Network Configuration" -outputFile $filenames.network
+    $routePrintCmdCommand = "route.exe PRINT"
+    Invoke-CmdCommandAndDocumentation -command $routePrintCmdCommand -headline "Query Routing Information" -outputFile $filenames.network
+    $arpCmdCommand = "arp.exe -a"
+    Invoke-CmdCommandAndDocumentation -command $arpCmdCommand -headline "Query ARP Table" -outputFile $filenames.network
+}
+
+function Get-RunningProcess {
+    Write-Data -Output "Querying running processes" -File $filenames.logfile -useWriteInformation
+    # The following command should be used for PS > 3
+    $runningProcessesPowerShellCommand = { Get-Process -IncludeUserName | Sort-Object -Property Id | Format-Table -AutoSize Id, ProcessName, UserName, Path | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $runningProcessesPowerShellCommand -headline "Query Running Processes (new method)" -outputFile $filenames.processes
+    $runningProcessesLegacyPowerShellCommand = { Get-WmiObject Win32_Process | Select-Object ProcessId, ProcessName, @{Name = "UserName"; Expression = { $_.GetOwner().Domain + "\" + $_.GetOwner().User } }, Path | Sort-Object ProcessId | Format-Table -AutoSize | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $runningProcessesLegacyPowerShellCommand -headline "Query Running Processes (legacy method)" -outputFile $filenames.processes
+}
+
+function Invoke-GpResult {
+    Write-Data -Output "Extracting local group policy via gpresult.exe" -File $filenames.logfile -useWriteInformation
+    $gpresultCmdCommand = "gpresult.exe /H `"$outputdir\$($filenames.gpresult)`""
+    Invoke-CmdCommandAndDocumentation -command $gpresultCmdCommand -headline "Dump Report of gpresult.exe" -manualCommandListOverride "gpresult.exe /H $($filenames.gpresult)" -outputFile $filenames.logfile
+}
+
+function Get-AutostartProgram {
+    Write-Data -Output "Querying autostart programs via WMI object" -File $filenames.logfile -useWriteInformation
+    $autostartPowerShellCommand = { Get-WmiObject win32_startupcommand | Format-List Command, Caption, Description, User, Location | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $autostartPowerShellCommand -headline "Check Autostart Programs via WMI" -outputFile $filenames.autostart
+}
+
 ###############################
 ### Main Part of the Script ###
 ###############################
@@ -1354,13 +1456,11 @@ function Get-AsrRulesConfiguration {
 #Create basic file structure and adjust settings
 Invoke-Setup
 
-#Get information about host
-$hostinfo = Get-HostInformation
-
-# Create the JSON result file with information gathered from various sources
+# Create the JSON result file with information gathered from various sources. This is done first because it is
+# theoretically possible to only dump the JSON file and then the rest of the script will not be run
 $result = @{
+    $filenames.host                 = Get-HostInformation
     $filenames.autologon            = Get-AutoLogon
-    $filenames.host                 = $hostinfo
     $filenames.patchlevel           = Get-Patchlevel
     $filenames.privilegeEscalation  = Get-PrivilegeEscalation
     $filenames.responder            = Get-ResponderProtocol
@@ -1372,13 +1472,14 @@ $result = @{
     $filenames.psremote             = Get-PSRemoting
     $filenames.secedit              = Invoke-Secedit
     $filenames.basicinfo            = Get-InsecurePowerShellVersion
-    $filenames.services             = Get-SystemService
+    $filenames.services             = Get-SystemServiceAndScheduledTask
     $filenames.mssql                = Get-MSSQLServerConfiguration
     $filenames.drivers              = Get-DeviceSecurity
     $filenames.spooler              = Get-PrintSpoolerConfiguration
     $filenames.asrrules             = Get-AsrRulesConfiguration
 }
 
+# Only on PowerShell version 3 and above, JSON can be exported. In earlier versions, we export an XML file
 if ($Script:psVersion.Major -ge 3) {
     Write-Data -Output "Exporting data to JSON" -File $filenames.logfile
     if ($script:testing) {
@@ -1396,84 +1497,38 @@ else {
 
 # If only the JSON file should be generated, we don't need to execute this part
 If (-Not $onlyJson) {
-    #Get Hostname, Domain and OS version
-    Write-Data -Output "[*] Query Basic Host Information" -File $filenames.host
-    Write-Data -Output $hostinfo -File $filenames.host
-
-    #Proxy and Internet Settings
-    $proxySettingsPowerShellCommand = { Get-Item "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" | ForEach-Object { Get-ItemProperty $_.pspath } | Out-String }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $proxySettingsPowerShellCommand -headline "Query Proxy and Internet Settings from Registry" -outputFile $filenames.basicinfo
-    #Get Basic Computer Information including VBS & Device Guard
-    $computerInfoPowerShellCommand = { Get-ComputerInfo }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $computerInfoPowerShellCommand -headline "Computer Info PowerShell" -outputFile $filenames.basicinfo
-    #In case Get-ComputerInfo fails the following commands should provide basic OS information
-    $computerInfoWMIPowerShellCommand = { Get-WmiObject win32_operatingsystem | Format-List * | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $computerInfoWMIPowerShellCommand -headline "Computer Info WMI" -outputFile $filenames.basicinfo
-
-    #Get the system's network information (IP addresses, interfaces, routes, ARP table)
-    $ipconfigCmdCommand = "ipconfig.exe /all"
-    Invoke-CmdCommandAndDocumentation -command $ipconfigCmdCommand -headline "Query Network Configuration" -outputFile $filenames.network
-    $routePrintCmdCommand = "route.exe PRINT"
-    Invoke-CmdCommandAndDocumentation -command $routePrintCmdCommand -headline "Query Routing Information" -outputFile $filenames.network
-    $arpCmdCommand = "arp.exe -a"
-    Invoke-CmdCommandAndDocumentation -command $arpCmdCommand -headline "Query ARP Table" -outputFile $filenames.network
-
+    Get-NetworkConfiguration
+    Get-BasicSystemInformation
     Get-UserInformation
     Get-OpenPort
     Get-AntiVirusProduct
-
-    #Get running processes and their owners
-    $runningProcessesPowerShellCommand = { Get-WmiObject Win32_Process | Select-Object ProcessId, ProcessName, @{Name = "UserName"; Expression = { $_.GetOwner().Domain + "\" + $_.GetOwner().User } }, Path | Sort-Object ProcessId | Format-Table -AutoSize | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $runningProcessesPowerShellCommand -headline "Query Running Processes" -outputFile $filenames.processes
-    # The following command can be used for PS > 3
-    # Write-Data -Output (Get-Process -IncludeUserName | Sort-Object -Property Id | Format-Table -AutoSize Id, UserName, ProcessName | Out-String -Width 4096) -File $filenames.processes
-
-    #Print scheduled tasks
-    $schtasksCmdCommand = "schtasks.exe /query /fo LIST /v"
-    Invoke-CmdCommandAndDocumentation -command $schtasksCmdCommand -headline "Query Scheduled Tasks" -outputFile $filenames.tasks
-
-    #Run gpresults.exe and save report
-    $gpresultCmdCommand = "gpresult.exe /H `"$outputdir\$($filenames.gpresult)`""
-    Invoke-CmdCommandAndDocumentation -command $gpresultCmdCommand -headline "Dump Report of gpresult.exe" -manualCommandListOverride "gpresult.exe /H $($filenames.gpresult)" -outputFile $filenames.logfile
-
+    Get-RunningProcess
+    Invoke-GpResult
     Get-FirewallConfiguration
     Get-InstalledProgram
+    Get-AutostartProgram
+    Get-UnattendedInstallFile
+    Get-BitlockerStatus
+    Get-NfsConfiguration
 
-    #Get Auto-Start Programs
-    $autostartPowerShellCommand = { Get-WmiObject win32_startupcommand | Format-List Command, Caption, Description, User, Location | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $autostartPowerShellCommand -headline "Check Autostart Programs via WMI" -outputFile $filenames.autostart
-
-    #If dumpPermissions is set, dump all permissions of the program folders (or custom paths)
+    # If dumpPermissions is set, dump all permissions of the program folders (or custom paths)
     if ($dumpPermissions) {
         Get-FileAndPermission -paths $paths
     }
-
-    #Check for unattended install files
-    Get-UnattendedInstallFile
-
-    #Check Bitlocker Information
-    Get-BitlockerStatus
-
-    # NFS Configuration (server and client configuration)
-    Get-NfsConfiguration
-
-    #Perform network trace
+    # Perform network trace if captureTraffic is set
     if ($PSBoundParameters.ContainsKey("captureTraffic")) {
         Invoke-NetworkTrafficCapture -seconds $captureTraffic -outputPath "$outputdir"
     }
-
 }
 
-#Do some error reporting
+# Clean up activities and error reporting
 Invoke-Teardown
-
-$result
 
 # SIG # Begin signature block
 # MIInngYJKoZIhvcNAQcCoIInjzCCJ4sCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAu4GHyvlxo7OjI
-# h/UGt395qbZgws5zBA2xgqpdRggVE6CCILIwggYUMIID/KADAgECAhB6I67aU2mW
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCEVy31PyIyqK6X
+# SFJY6R77DaMq/k7q68DaiKuR06WmbqCCILIwggYUMIID/KADAgECAhB6I67aU2mW
 # D5HIPlz0x+M/MA0GCSqGSIb3DQEBDAUAMFcxCzAJBgNVBAYTAkdCMRgwFgYDVQQK
 # Ew9TZWN0aWdvIExpbWl0ZWQxLjAsBgNVBAMTJVNlY3RpZ28gUHVibGljIFRpbWUg
 # U3RhbXBpbmcgUm9vdCBSNDYwHhcNMjEwMzIyMDAwMDAwWhcNMzYwMzIxMjM1OTU5
@@ -1652,34 +1707,34 @@ $result
 # eXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBDb2RlIFNpZ25pbmcgMjAyMSBD
 # QQIQRgh5l6mxRWCXz1WL5VD29DANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCB/scagB8SI
-# W3iKDBpA+iOp9gOr+246SAiTV0mCvfbjYDANBgkqhkiG9w0BAQEFAASCAgBnLP5P
-# Q3RMXI5HWf1x/Tk4aZdvLfsZAbN6YcfPR+Aco9iQSBGIv7HSBwxYK08kHXDUtm2o
-# KeJeQwPRUSABS1ATF65EnOW3P0hgzqdhzZDEmTVCA4uQXUw71HHel5QvwW4onRgc
-# yH3ANhOSMQqV6y1wrgnRlzk2L7LkLNCAUDHv3tQS/Zdz8jDUqnNxMUKt5VR1FPMw
-# 2QeGcq26IDASMzdG5ZYx//vCruVX00O5O2sPeyuAG+6DQi+ikvF7Yg1nHKvouNEI
-# CjMWyzgKKxMp4MZyk69ZbqIGGmv/2hRtB/TotuQCC+cOmq4LllApPkoraTXFBSQR
-# LbTn7X1gA5JTGqtw6jQbVuXOcO/1fR9Wgsl2q2EKQ1aqdDWZHNP3W42eHyJImElQ
-# grApqaHno+bMTWA6kpo6NdGeUsUwnuqJ7fVYf3fT9JjxsCaGwbR3sLDuhjF97fvB
-# ywJh3w/ye0qsAEgOWNjmuglD1lVwmzHgssJ95jLF4lbrp84hdUBz7T5zC26JB2Iq
-# K7CY0Gft6cqbpPkvKLzMzXPkTNgjX4UC1SLcSSy3Abn1ODp7hMv/d+8HhFYjtBiY
-# 6enKhgw/3gmwMghHBVHzkg8YxwxTIP5nPJFuEz+uHb5s9yS8xIymDBs0zt4Pnq1r
-# 1UG8lA3hIsWr3h6mZJkGMaJAxqHa3pyVVDIjKqGCAyIwggMeBgkqhkiG9w0BCQYx
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCASnN/OKoEj
+# AdiXmDV34diLmozY6UyLGrQnEQIcp1/2BDANBgkqhkiG9w0BAQEFAASCAgCiND59
+# HROItrkUSRJDFsMG184OlVtfP0FsxwzDGNjefw2TY0QHeA0G/3/XkIbirq9Tk1Cj
+# RjOJCHuT1eF8QHazzHVlYZci33qonHfJwY3IXpAEHLJjLfUHlHdIsRdDeybd1ZT4
+# nCzzGNQtjittpXxajw/1SH2Qs8XxGlQgMSPmXwdMHxzqvp2hi5Anq2h7AhZUwZrd
+# 9ziMDgPA+vbvo6O+pJBHsQ4QmdV4dYs/SxrlgOAEGLygwev6Os5Ckz0SgE5Pqitt
+# KDyvQ79xPPXkbSH+w6qGxE1R3IRCehg+y+bkrrnZ+0/dcNPFE0uy+hbgLugk0+qK
+# L3DhWpz+veHXMmsJWtxQUDLpn1GACo7xKSaUEY5QlhZHicgMZLFZqCTsfmr16miP
+# fBjv0jNCjNUCyVflzekH9ElUZhbPrYSsts8HJ3pbcNPyGe+eENLCXY7WznRhFSfT
+# DHrQpPjgCCnQPZgr76jamOjSF4J39tMhuSuJo78p9r6PPDIk2f1EnrLfKkL7QeWi
+# tVyF3azHtsifLPtr9TigXFKnffAFQltyAXJiDmNoLn3gbM/LrYAmZVdWocJASnlh
+# rg+Wwi/ynuMp6pRPrGweSrDPa/YB5yJFLE9RPNvMEtNQAtLp2Ih0XMsAqpmYxp5g
+# bXYySeZBuxi+QQdTCzQ3tiCvol+VWIuS3Kl9CKGCAyIwggMeBgkqhkiG9w0BCQYx
 # ggMPMIIDCwIBATBpMFUxCzAJBgNVBAYTAkdCMRgwFgYDVQQKEw9TZWN0aWdvIExp
 # bWl0ZWQxLDAqBgNVBAMTI1NlY3RpZ28gUHVibGljIFRpbWUgU3RhbXBpbmcgQ0Eg
 # UjM2AhA6UmoshM5V5h1l/MwS2OmJMA0GCWCGSAFlAwQCAgUAoHkwGAYJKoZIhvcN
-# AQkDMQsGCSqGSIb3DQEHATAcBgkqhkiG9w0BCQUxDxcNMjQwODI5MTAwMTI4WjA/
-# BgkqhkiG9w0BCQQxMgQwPbn/j1xyOTMkQ1MjnJRNCuGSdNV0dBURWiAMJ/XQqmDM
-# 55wb60a7VJoJkAwPHSwDMA0GCSqGSIb3DQEBAQUABIICABV+Q86dPcS7meJgTpvc
-# yqocadG1kb5AxXT+g9LMbr5+wPm6iZgIJxMEvagWsFPZe0aLmxmSZGKpNuVC02Xd
-# xcxsdwvl0GGSSocS7/y7RjeNweIbTCJAT3VElclVi8QhjFJ7umZ3vtv0kyew5EHh
-# RVzF72Xg5TNTsknZmXwl5N4ulFg7cY704zniQvOMixTcSIpx2bYNJvCHJboDT/a5
-# zW0qAeqhFmrqqTPA4VZnXfdJ/5FREvCckwYykBTWE/v9EDkevFq4O2OovNifTP18
-# m3QuUAJpmssemCUbMi5TeNWeoqclAXN7Kd3kmwbXwL1JF2ARaHsE2PqFWzdUKmAz
-# mSzUFMGDzKWYOv4V1SUlGFCd2+mf3NtNOR9jgJpFNzf1uoOZdCH2iPfST4Sz7pgI
-# Yt755ZX0J8PL0Y2xU5FYVmuXblJ8jhKbKCuQhVlKHbHNDQCmGVIJAWthmJsgyMFp
-# VcPM9qKB7d1dvnu2tvGfFnthCm0alN418BfEyx/2WisnpjoN49UsvRJUH4H0WGCC
-# ieEn+RgJHcCG0dT+4Dt0J4jv2hfSTJBC4MAVwlWiGxy0iTv9rsvDgRcA8rQoDzGu
-# o7+zqpcov8yzxUj0D/ivPEybb89hG/gdKgaBT94U7K5kNBwCLeUEPEBaOlTDJ2Bk
-# UsxQSgqu4Aae8oJhwWRd09oM
+# AQkDMQsGCSqGSIb3DQEHATAcBgkqhkiG9w0BCQUxDxcNMjQxMDI4MTI1NTA0WjA/
+# BgkqhkiG9w0BCQQxMgQw5ifg+6TWHuDXOw9/mXfMMVhNJlJrOhYAFOQVQOhZkUOf
+# UgAtOvdYt3+ukUsJj3/hMA0GCSqGSIb3DQEBAQUABIICABW7FuH/5eP7Aw1UUqMq
+# cg7bMZdUakHHQu4ijgLtx96tkzjxf9oyFyhGoq6UMP+4PdXepGk/XQg7TOhez5V4
+# wR7fYwQtWQMAWRpZ8vSF0HpT3j9cZCI8mpsuARYYa4PikeMopwJn0ZnauASpQcnv
+# xdrjhjZmoQHPKcMcw45blc13dm2jX2wBBubdb3LLN2nC8FP4iQRT4Aa9vj/onAph
+# st5N9/9cn+BMVUPt6ZDXZ1CH6shuZFh5+wngjb2LyBDWpZM66iQ6XMk+39BrDXGk
+# p1T9tYGNOFFJuF5Uzsy/XMwyXXbmQ6IqqQPX6KbESCqDHvfs7FGHdIy7LgVNLew5
+# otRX48sKOgNx4YpGxz9CZsZPgV/z8V8s/nerLETmvDjAlqs4ufgTj4tRAbTviF0Y
+# e7CtiHR1VKp3Mvo0ueGYhHsjXvsET2r2O+qD6qWmNfaa8Ue8XT0JbpQZRjzs/M61
+# qNw6jlLmg4TS4H1Jyby5AyDr2Ivu7+GhA5Ccv4jRVFzBMFkAYIMnzJmNTtM7A5Tq
+# 9XJWxcOeH6duiQcBWBmOTfSRRoAj1cPxtcE71w+RTGuLINaCptzN6G25CAdFu7qL
+# ISJkXLs8B/DiC712TjR/foDSYjgfyrTDJOI0bS6WrM/SFx4Sm8JxzCtrKQi7eFuJ
+# yPGFrlzqz4vHr3JghgYyaEQZ
 # SIG # End signature block
