@@ -41,9 +41,9 @@
 #>
 param(
     [string] $outputdir = (Get-Item -Path ".\").FullName,
+    [switch] $testing = $false,
     [string[]] $paths = @(),
     [switch] $force = $false,
-    [switch] $testing = $false,
     [switch] $version = $false,
     [switch] $dumpPermissions = $false,
     [switch] $onlyJson = $false,
@@ -52,7 +52,7 @@ param(
 )
 
 # Version
-$versionString = "v3.7.1"
+$versionString = "v3.7.2"
 
 # Check permissions of the following paths
 $paths += $env:ProgramFiles
@@ -104,6 +104,8 @@ $rememberFormatEnumerationLimit = $null
 $psVersion = $null
 $outputFileContents = @{}
 $Script:InformationPreference = "Continue"
+# Do not display progress bars in order to not break certain connections (e.g., SSH)
+$Script:ProgressPreference = "SilentlyContinue"
 
 function Invoke-Setup {
 
@@ -1430,11 +1432,11 @@ function Get-NetworkConfiguration {
 
 function Get-RunningProcess {
     Write-Data -Output "Querying running processes" -File $filenames.logfile -useWriteInformation
-    # The following command should be used for PS > 3
-    $runningProcessesPowerShellCommand = { Get-Process -IncludeUserName | Sort-Object -Property Id | Format-Table -AutoSize Id, ProcessName, UserName, Path | Out-String -Width 4096 }
-    Invoke-PowerShellCommandAndDocumentation -scriptBlock $runningProcessesPowerShellCommand -headline "Query Running Processes (new method)" -outputFile $filenames.processes
-    $runningProcessesLegacyPowerShellCommand = { Get-WmiObject Win32_Process | Select-Object ProcessId, ProcessName, @{Name = "UserName"; Expression = { $_.GetOwner().Domain + "\" + $_.GetOwner().User } }, Path | Sort-Object ProcessId | Format-Table -AutoSize | Out-String -Width 4096 }
+    $runningProcessesLegacyPowerShellCommand = { Get-WmiObject Win32_Process | Select-Object ProcessId, @{Name = "UserName"; Expression = { $_.GetOwner().Domain + "\" + $_.GetOwner().User } }, ProcessName, CommandLine, Path | Sort-Object ProcessId | Format-Table -AutoSize | Out-String -Width 4096 }
     Invoke-PowerShellCommandAndDocumentation -scriptBlock $runningProcessesLegacyPowerShellCommand -headline "Query Running Processes (legacy method)" -outputFile $filenames.processes
+    # The following command should be used for PS > 3
+    $runningProcessesPowerShellCommand = { Get-Process -IncludeUserName | Sort-Object -Property Id | Format-Table -AutoSize Id, UserName, ProcessName, Path | Out-String -Width 4096 }
+    Invoke-PowerShellCommandAndDocumentation -scriptBlock $runningProcessesPowerShellCommand -headline "Query Running Processes (new method)" -outputFile $filenames.processes
 }
 
 function Invoke-GpResult {
@@ -1527,8 +1529,8 @@ Invoke-Teardown
 # SIG # Begin signature block
 # MIInngYJKoZIhvcNAQcCoIInjzCCJ4sCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCEVy31PyIyqK6X
-# SFJY6R77DaMq/k7q68DaiKuR06WmbqCCILIwggYUMIID/KADAgECAhB6I67aU2mW
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCABGpnCli9I4H2i
+# qH9qN+J9P4MmLxTJND3uhmyqLaN3o6CCILIwggYUMIID/KADAgECAhB6I67aU2mW
 # D5HIPlz0x+M/MA0GCSqGSIb3DQEBDAUAMFcxCzAJBgNVBAYTAkdCMRgwFgYDVQQK
 # Ew9TZWN0aWdvIExpbWl0ZWQxLjAsBgNVBAMTJVNlY3RpZ28gUHVibGljIFRpbWUg
 # U3RhbXBpbmcgUm9vdCBSNDYwHhcNMjEwMzIyMDAwMDAwWhcNMzYwMzIxMjM1OTU5
@@ -1707,34 +1709,34 @@ Invoke-Teardown
 # eXN0ZW1zIFMuQS4xJDAiBgNVBAMTG0NlcnR1bSBDb2RlIFNpZ25pbmcgMjAyMSBD
 # QQIQRgh5l6mxRWCXz1WL5VD29DANBglghkgBZQMEAgEFAKCBhDAYBgorBgEEAYI3
 # AgEMMQowCKACgAChAoAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEEMBwGCisG
-# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCASnN/OKoEj
-# AdiXmDV34diLmozY6UyLGrQnEQIcp1/2BDANBgkqhkiG9w0BAQEFAASCAgCiND59
-# HROItrkUSRJDFsMG184OlVtfP0FsxwzDGNjefw2TY0QHeA0G/3/XkIbirq9Tk1Cj
-# RjOJCHuT1eF8QHazzHVlYZci33qonHfJwY3IXpAEHLJjLfUHlHdIsRdDeybd1ZT4
-# nCzzGNQtjittpXxajw/1SH2Qs8XxGlQgMSPmXwdMHxzqvp2hi5Anq2h7AhZUwZrd
-# 9ziMDgPA+vbvo6O+pJBHsQ4QmdV4dYs/SxrlgOAEGLygwev6Os5Ckz0SgE5Pqitt
-# KDyvQ79xPPXkbSH+w6qGxE1R3IRCehg+y+bkrrnZ+0/dcNPFE0uy+hbgLugk0+qK
-# L3DhWpz+veHXMmsJWtxQUDLpn1GACo7xKSaUEY5QlhZHicgMZLFZqCTsfmr16miP
-# fBjv0jNCjNUCyVflzekH9ElUZhbPrYSsts8HJ3pbcNPyGe+eENLCXY7WznRhFSfT
-# DHrQpPjgCCnQPZgr76jamOjSF4J39tMhuSuJo78p9r6PPDIk2f1EnrLfKkL7QeWi
-# tVyF3azHtsifLPtr9TigXFKnffAFQltyAXJiDmNoLn3gbM/LrYAmZVdWocJASnlh
-# rg+Wwi/ynuMp6pRPrGweSrDPa/YB5yJFLE9RPNvMEtNQAtLp2Ih0XMsAqpmYxp5g
-# bXYySeZBuxi+QQdTCzQ3tiCvol+VWIuS3Kl9CKGCAyIwggMeBgkqhkiG9w0BCQYx
+# AQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDzkIEmbohO
+# dOHzvUhYXul7b/rPPiM8TTBM9CpQ7mBMQzANBgkqhkiG9w0BAQEFAASCAgCN/yFL
+# HdwviWPlx0IuCeuw+/Zl8njwl5icU4PKIqov7y14VoaVMlyj1MBaSGqHh+q0zr8a
+# AxyqKTOsPgrb8D/B8uAWEoCCPMVZ93j9oPia2nCduVkI6YzH/8o/HIZ8y3SDJbQv
+# Zx73CcPyAoq4ZzIPyK8PNC6GmvxKuU/fu3XWhoEZTzwT2bvjP7FWVR3KDbzcYdpk
+# KMw3I6j94u9tbhJ5iIf7nSirBLIZp4346YLWkm0rbhwRLCP7RJ2mqkpjchCtoZNR
+# mvi0rUFngtkFatYQAr8ZRIz+88M4Ln3dX85paREJNp0u64GxTGbJOtqdw/t/6n80
+# vfeQD1FZoTE95/iG8u3dTQuNheTmE/FsL+BTKLwfszg7yr2CBIKX6RpYyH2GIJln
+# QB6MQV7xIVXtuk9EmGkU0Xwl+qGDZV7UuuH/pS5mHcjQADTfYxIIkBTGveNxffoP
+# iUyNTe7Fq58Jh6i07vV1fPtQ4R1FjqMcmtVN9LOHRBEqICz5XfDphGwVXINI6FaO
+# J2uq7cGx+A5WJUPs+7LxHt8sxtL47aLrAM61Sezs51IIPND4Ltpy3PIRDKauC+Vr
+# h0G89yHg6ZMCbmNxn5IdiN+6Rc30d8I2AJvW9wak+XeaZFFZYE/Bymkwep/KVloP
+# +rVJQHG4ciZL973H6V+5E5yQS7YQq8LoTdoxOKGCAyIwggMeBgkqhkiG9w0BCQYx
 # ggMPMIIDCwIBATBpMFUxCzAJBgNVBAYTAkdCMRgwFgYDVQQKEw9TZWN0aWdvIExp
 # bWl0ZWQxLDAqBgNVBAMTI1NlY3RpZ28gUHVibGljIFRpbWUgU3RhbXBpbmcgQ0Eg
 # UjM2AhA6UmoshM5V5h1l/MwS2OmJMA0GCWCGSAFlAwQCAgUAoHkwGAYJKoZIhvcN
-# AQkDMQsGCSqGSIb3DQEHATAcBgkqhkiG9w0BCQUxDxcNMjQxMDI4MTI1NTA0WjA/
-# BgkqhkiG9w0BCQQxMgQw5ifg+6TWHuDXOw9/mXfMMVhNJlJrOhYAFOQVQOhZkUOf
-# UgAtOvdYt3+ukUsJj3/hMA0GCSqGSIb3DQEBAQUABIICABW7FuH/5eP7Aw1UUqMq
-# cg7bMZdUakHHQu4ijgLtx96tkzjxf9oyFyhGoq6UMP+4PdXepGk/XQg7TOhez5V4
-# wR7fYwQtWQMAWRpZ8vSF0HpT3j9cZCI8mpsuARYYa4PikeMopwJn0ZnauASpQcnv
-# xdrjhjZmoQHPKcMcw45blc13dm2jX2wBBubdb3LLN2nC8FP4iQRT4Aa9vj/onAph
-# st5N9/9cn+BMVUPt6ZDXZ1CH6shuZFh5+wngjb2LyBDWpZM66iQ6XMk+39BrDXGk
-# p1T9tYGNOFFJuF5Uzsy/XMwyXXbmQ6IqqQPX6KbESCqDHvfs7FGHdIy7LgVNLew5
-# otRX48sKOgNx4YpGxz9CZsZPgV/z8V8s/nerLETmvDjAlqs4ufgTj4tRAbTviF0Y
-# e7CtiHR1VKp3Mvo0ueGYhHsjXvsET2r2O+qD6qWmNfaa8Ue8XT0JbpQZRjzs/M61
-# qNw6jlLmg4TS4H1Jyby5AyDr2Ivu7+GhA5Ccv4jRVFzBMFkAYIMnzJmNTtM7A5Tq
-# 9XJWxcOeH6duiQcBWBmOTfSRRoAj1cPxtcE71w+RTGuLINaCptzN6G25CAdFu7qL
-# ISJkXLs8B/DiC712TjR/foDSYjgfyrTDJOI0bS6WrM/SFx4Sm8JxzCtrKQi7eFuJ
-# yPGFrlzqz4vHr3JghgYyaEQZ
+# AQkDMQsGCSqGSIb3DQEHATAcBgkqhkiG9w0BCQUxDxcNMjQxMjIwMTAzMjUzWjA/
+# BgkqhkiG9w0BCQQxMgQwhMBqAWNLtMYbSJcKD4DR3xFr4tOaYTJ1v5ZBOfe0dsnQ
+# Mw1a3LrtwSQrgIvMCZcRMA0GCSqGSIb3DQEBAQUABIICADlA06guu3gkxvKhKcw2
+# OZn3rrFSInvCfgLJaC8I8dsuUxWnpXawvoWYSeb/8zlRCRd5yTQCU5NjRrLf1NBl
+# kQFkFh6DqJE4FtobFrBbJ2ZQ2oj+U2Gcy+YAHXZDQSMCyY2hnWp8hllJKRd8Omip
+# kRpnkU/bXMYHOGPQ5hOoN1V9xvLonuxwyu0wmIHjEM+ryI8t/Tjj4NYdHs6Xb9Ix
+# 3tppYeLsvuCXCzEFvm4cZCa/FSl+ZRtoam7hLeOr86GIvjVytatxhc91GeeMFUUW
+# Qy5Xta8LqTDPe8EMIbI9z8vWUHlosROzCy2fL4hvCL+SKuGKCJyuLGIdq9SverLI
+# b4pK0zuuTM4s66aDNKxdFrB+u9k2d46l3AIxv4taj83n1HmFMegapNXXN/SlRnl7
+# mDGatDfyR+IeFNHyrrLM5rdhn6NSsTN/YfuTz5wW81qdMYKitVlspZ3N9ETr5IdU
+# DcnUmRO9yvnKEW5TIHsl0kKDvM1dtAcFr5iM7JeNfZTmlwRkYr10oEWV5VR6n21R
+# oEzZs/sgTFlFeoUK4bUngMGG/J9+BDXqegUFcMUm8GHnyrI5HWoH/WNgkCRTYgC9
+# RRUrn4DR/qG7MVBRNUt9RU1nnERXZREdQU24DxFtxlLxPxaZu6Ty1dCJLmXti70T
+# P+yBgFr2+VwG6GVygIIDPIjY
 # SIG # End signature block

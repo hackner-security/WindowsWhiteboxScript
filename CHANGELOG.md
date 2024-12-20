@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Unreleased
 
+## [3.7.2] - 2024-12-20
+
+### Changed
+
+* Hide progress bar used by certain cmdlets
+
+### Added
+
+* CLI arguments of running processes
+
 ## [3.7.1] - 2024-10-28
 
 ### Changed

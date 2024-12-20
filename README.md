@@ -10,27 +10,42 @@ The script is designed to be run with administrative privileges to gain as much 
 
 ```powershell
 PS C:\whitebox> .\WindowsWhiteboxScript.ps1
-2023/03/08 14:53: Started script execution.
-Script version: v3.0
-Powershell version: 5.1
-2023/03/08 15:01: All Done.
-
-Name                           Value
-----                           -----
-privilege_escalation           {writablePaths, writableServicePaths, scheduledTasks, unquotedServicePaths, alwaysIns...
-responder_protocols            {enableMulticast, nbns, enableMDNS}
-wsus                           {WSUSServerUsed, WUStatusServer, WUServer}
-services                       {@{ProcessId=5012; Name=AdobeARMservice; State=Running; StartName=LocalSystem; StartM...
-basic_information              {commandOutput, psCommand, psVersion2Installed}
-secedit_output.inf             [Unicode]...
-powershell_remoting            {psremotingenabled}
-smb                            {Shares, EncryptData, EnableSMB1, RequireSecuritySignature, RejectUnencryptedAccess, ...
-patchlevel                     {@{Caption=http://support.microsoft.com/?kbid=5022502; CSName=DESKTOP-II2BMID; Descri...
-host                           {domain, ipv4, scriptVersion, windowsVersion, hostname, scriptStartTime, psVersion, o...
-rdp                            {nla, fDenyTSConnections, encryption, certificateSubject, certificateIssuer, security...
-autologon                      {DefaultUserName, DefaultPasswordSet}
-user_account_control           {ConsentPromptBehaviorAdmin, EnableLUA, FilterAdministratorToken, LocalAccountTokenFi...
-credential_protection          {LsaCfgFlags, WDigest, SecurityServicesRunning, LSASSRunAsPPL}
+[*] 2024/10/29 10:05 - Started script execution.
+[*] 2024/10/29 10:05 - Script version: v3.7.1
+[*] 2024/10/29 10:05 - Powershell version: 5.1
+[*] 2024/10/29 10:05 - Output directory: C:\whitebox\WIN-0E273E6
+[*] 2024/10/29 10:05 - Querying basic host information
+[*] 2024/10/29 10:05 - Checking potential autologon configuration
+[*] 2024/10/29 10:05 - Querying OS updates and patch level
+[*] 2024/10/29 10:05 - Checking for privilege escalation possibilities
+[*] 2024/10/29 10:06 - Checking for unquoted service paths
+[*] 2024/10/29 10:06 - Inspecting settings for potentially spoofable protocols
+[*] 2024/10/29 10:06 - Querying RDP settings
+[*] 2024/10/29 10:06 - Getting WSUS settings from registry
+[*] 2024/10/29 10:06 - Verifying settings for credential protection
+[*] 2024/10/29 10:06 - Checking SMB configuration
+[*] 2024/10/29 10:06 - Querying UAC settings from registry
+[*] 2024/10/29 10:06 - Getting PowerShell remoting configuration
+[*] 2024/10/29 10:06 - Invoking secedit for password policy checks
+[*] 2024/10/29 10:06 - Verifying installed PowerShell versions
+[*] 2024/10/29 10:06 - Getting running services and scheduled tasks
+[*] 2024/10/29 10:06 - Identifying MSSQL configuration
+[*] 2024/10/29 10:06 - Checking device security settings and drivers
+[*] 2024/10/29 10:06 - Getting print spooler service settings
+[*] 2024/10/29 10:06 - Verifying installed attack surface reduction rules
+[*] 2024/10/29 10:06 - Getting the system network information (IP addresses, interfaces, routes, ARP table)
+[*] 2024/10/29 10:06 - Querying basic system information
+[*] 2024/10/29 10:06 - Getting general OS user and group information
+[*] 2024/10/29 10:06 - Querying open network ports
+[*] 2024/10/29 10:06 - Getting antivirus information
+[*] 2024/10/29 10:06 - Querying running processes
+[*] 2024/10/29 10:06 - Extracting local group policy via gpresult.exe
+[*] 2024/10/29 10:06 - Reading firewall configuration and rules
+[*] 2024/10/29 10:06 - Querying installed applications
+[*] 2024/10/29 10:06 - Querying autostart programs via WMI object
+[*] 2024/10/29 10:06 - Querying hard drive encryption settings (Bitlocker)
+[*] 2024/10/29 10:06 - Inspecting NFS configuration
+[*] 2024/10/29 10:07 - All Done.
 ```
 
 When you run the PowerShell script, you can see that the output is split into categories. The generated text files in the main output folder are for manual investigation and contain lots of information. The additionally generated JSON file (or XML if you are on an old machine) contains analyzable information you can potentially verify automatically.
